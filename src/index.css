@@ -1,0 +1,41 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  background-color: #0b3d24;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Felt table texture used behind the game table layout */
+.felt-bg {
+  background-color: #0f5132;
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.06), transparent 60%),
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.025) 0px,
+      rgba(255, 255, 255, 0.025) 2px,
+      transparent 2px,
+      transparent 12px
+    );
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+}
