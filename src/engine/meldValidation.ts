@@ -445,19 +445,46 @@ export function appendToMeld(meld: Meld, card: CardModel, slideEdge?: 'top' | 'b
 }
 
 // ---------------------------------------------------------------------------
-// Move Wild (display-order-only repositioning within a Set - see item 7)
+// Move Wild — Sets (cosmetic edge toggle) + Sequences (relocate / reinterpret)
 // ---------------------------------------------------------------------------
+
+export type WildMoveInfo =
+  | { kind: 'set'; edge: 'front' | 'back'; nextLabel: string }
+  | { kind: 'sequence'; nextLabel: string }
+
+/**
+ * Reports whether `meld` has a movable wild (or a same-suit natural 2 that
+ * can be reinterpreted as a wild) and what the next Move Wild action would
+ * do. Used by the UI to show/hide the control and label it.
+ *
+ * Sequences: a same-suit 2 sitting as a natural in the '2' slot (e.g. 2-3-4)
+ * can be pulled out and placed as a wild on an open end (e.g. 3-4-5[wild]),
+ * which is exactly what lets a player then append a 6. Existing isWildFill
+ * wilds can likewise be cycled between the open ends (and back to a natural
+ * 2 slot when the wild card is a same-suit 2 and that slot is adjacent).
+ */
+export function getWildMoveInfo(meld: Meld): WildMoveInfo | null {
+  if (meld.type === 'set') {
+    const edge = wildEdgeInSet(meld)
+    if (!edge) return null
+    return {
+      kind: 'set',
+      edge,
+      nextLabel: edge === 'front' ? 'Move wild to back' : 'Move wild to front',
+    }
+  }
+  if (meld.type === 'sequence') {
+    const plan = planSequenceWildMove(meld)
+    if (!plan) return null
+    return { kind: 'sequence', nextLabel: plan.nextLabel }
+  }
+  return null
+}
 
 /**
  * Reports whether `meld` currently has exactly 1 wild card sitting at an
- * edge (first or last) slot, and if so which edge. Purely a UI helper for
- * deciding whether to show a "Move Wild" control - does not mutate.
- *
- * Only Sets are supported: a Set's slot order has no rules significance (all
- * slots share the same `slotRank`), so reordering is purely cosmetic. A
- * Sequence's slot order IS rules-significant (low-to-high rank), so its
- * wild's position is already fully determined by the Slide mechanic above
- * and must not be freely reordered.
+ * edge (first or last) slot, and if so which edge. Sets only — kept for
+ * existing callers/tests; prefer {@link getWildMoveInfo} for new UI.
  */
 export function wildEdgeInSet(meld: Meld): 'front' | 'back' | null {
   if (meld.type !== 'set' || meld.wildCount !== 1) return null
@@ -468,11 +495,21 @@ export function wildEdgeInSet(meld: Meld): 'front' | 'back' | null {
 }
 
 /**
+ * Moves / reinterprets a wild within a meld:
+ * - Set: toggle wild between front and back (cosmetic).
+ * - Sequence: cycle a wild (or a natural same-suit 2) between legal open-end
+ *   placements so the player can free an end for appending (e.g. 2-3-4 →
+ *   3-4-5[2 as wild] → append 6).
+ */
+export function moveWildInMeld(meld: Meld): MeldResult {
+  if (meld.type === 'set') return moveWildEdgeInSet(meld)
+  if (meld.type === 'sequence') return moveWildInSequence(meld)
+  return { ok: false, error: 'Move Wild is not available for this meld.' }
+}
+
+/**
  * Moves a Set's single wild card from whichever edge it currently occupies
- * to the opposite edge (front<->back toggle). Purely a display/ordering
- * change - does not affect legality, wild count, or classification, so no
- * other meldValidation logic needs to run beyond recomputing flags (which
- * are order-independent for a Set anyway, but recomputed for consistency).
+ * to the opposite edge (front<->back toggle).
  */
 export function moveWildEdgeInSet(meld: Meld): MeldResult {
   if (meld.type !== 'set') {
@@ -492,6 +529,144 @@ export function moveWildEdgeInSet(meld: Meld): MeldResult {
   }
   const next: Meld = { ...meld, slots }
   recomputeMeldFlags(next)
+  return { ok: true, meld: next }
+}
+
+type SequenceWildPlacement = {
+  card: CardModel
+  slots: MeldSlot[]
+  nextLabel: string
+  /** Stable key so we can detect the "current" placement when cycling. */
+  key: string
+}
+
+function planSequenceWildMove(meld: Meld): SequenceWildPlacement | null {
+  if (meld.type !== 'sequence' || !meld.suit) return null
+
+  // Prefer an existing wild fill; otherwise a same-suit natural 2 in its own slot.
+  let sourceIdx = meld.slots.findIndex((s) => s.isWildFill)
+  if (sourceIdx < 0) {
+    sourceIdx = meld.slots.findIndex(
+      (s) => s.card.rank === '2' && s.card.suit === meld.suit && s.slotRank === '2' && !s.isWildFill,
+    )
+  }
+  if (sourceIdx < 0) return null
+
+  const card = meld.slots[sourceIdx].card
+  const remaining = meld.slots.filter((_, i) => i !== sourceIdx)
+  if (remaining.length < 2) return null
+
+  // Remaining naturals must already form a contiguous run (no gaps).
+  for (let i = 1; i < remaining.length; i += 1) {
+    const prev = RANK_ORDER[remaining[i - 1].slotRank]
+    const curr = RANK_ORDER[remaining[i].slotRank]
+    if (curr !== prev + 1) return null
+  }
+
+  const min = RANK_ORDER[remaining[0].slotRank]
+  const max = RANK_ORDER[remaining[remaining.length - 1].slotRank]
+  const suit = meld.suit
+
+  type Option = { key: string; nextLabel: string; build: () => MeldSlot[] }
+  const options: Option[] = []
+
+  // Restore as natural 2 when the card is a same-suit 2 and slot 2 is adjacent.
+  if (card.rank === '2' && card.suit === suit) {
+    const twoOrder = RANK_ORDER['2']
+    if (twoOrder === min - 1) {
+      options.push({
+        key: 'natural:2:bottom',
+        nextLabel: 'Move 2 to natural low end',
+        build: () => [
+          { card, slotRank: '2', isWildFill: false },
+          ...remaining.map((s) => ({ ...s, isWildFill: isWildFillForSlot(s.card, s.slotRank, suit) })),
+        ],
+      })
+    }
+    if (twoOrder === max + 1) {
+      options.push({
+        key: 'natural:2:top',
+        nextLabel: 'Move 2 to natural high end',
+        build: () => [
+          ...remaining.map((s) => ({ ...s, isWildFill: isWildFillForSlot(s.card, s.slotRank, suit) })),
+          { card, slotRank: '2', isWildFill: false },
+        ],
+      })
+    }
+  }
+
+  const topRank = RANK_BY_ORDER[max + 1]
+  if (topRank) {
+    options.push({
+      key: `wild:${topRank}:top`,
+      nextLabel: `Move wild to ${topRank} (high end)`,
+      build: () => [
+        ...remaining.map((s) => ({ ...s, isWildFill: false })),
+        { card, slotRank: topRank, isWildFill: true },
+      ],
+    })
+  }
+
+  const bottomRank = RANK_BY_ORDER[min - 1]
+  if (bottomRank) {
+    // Avoid duplicating the natural-2 option when bottomRank is 2 and card is same-suit 2.
+    const isDuplicateNaturalTwo = card.rank === '2' && card.suit === suit && bottomRank === '2'
+    if (!isDuplicateNaturalTwo) {
+      options.push({
+        key: `wild:${bottomRank}:bottom`,
+        nextLabel: `Move wild to ${bottomRank} (low end)`,
+        build: () => [
+          { card, slotRank: bottomRank, isWildFill: true },
+          ...remaining.map((s) => ({ ...s, isWildFill: false })),
+        ],
+      })
+    }
+  }
+
+  if (options.length === 0) return null
+
+  // Detect current placement key.
+  const current = meld.slots[sourceIdx]
+  let currentKey: string
+  if (!current.isWildFill && current.slotRank === '2') {
+    currentKey = sourceIdx === 0 ? 'natural:2:bottom' : 'natural:2:top'
+  } else if (sourceIdx === 0) {
+    currentKey = `wild:${current.slotRank}:bottom`
+  } else {
+    currentKey = `wild:${current.slotRank}:top`
+  }
+
+  const currentOptIdx = options.findIndex((o) => o.key === currentKey)
+  const nextOpt = options[(currentOptIdx + 1) % options.length]
+  // If we only found the current placement, there's nowhere else to go.
+  if (options.length === 1 && currentOptIdx === 0) return null
+
+  return {
+    card,
+    slots: nextOpt.build(),
+    nextLabel: nextOpt.nextLabel,
+    key: nextOpt.key,
+  }
+}
+
+function moveWildInSequence(meld: Meld): MeldResult {
+  const plan = planSequenceWildMove(meld)
+  if (!plan) {
+    return {
+      ok: false,
+      error:
+        'No legal wild move on this sequence (need a wild, or a same-suit 2 that can relocate to an open end).',
+    }
+  }
+  const next: Meld = { ...meld, slots: plan.slots }
+  recomputeMeldFlags(next)
+  // Still exactly one wild after a wild relocation; natural-2 restore has wildCount 0.
+  if (next.slots.filter((s) => s.isWildFill).length > 1) {
+    return { ok: false, error: 'A meld may contain at most 1 wild card.' }
+  }
+  if (next.slots.length < 3) {
+    return { ok: false, error: 'A sequence needs at least 3 cards.' }
+  }
   return { ok: true, meld: next }
 }
 

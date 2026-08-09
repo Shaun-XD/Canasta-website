@@ -21,8 +21,8 @@ import {
   performDiscard,
   performDrawFromStock,
 } from '../engine/turnEngine'
-import { moveWildEdgeInSet } from '../engine/meldValidation'
-import { planAiAppends, planAiMelds, pickAiDiscard } from '../engine/aiPlayer'
+import { moveWildInMeld as moveWildInMeldEngine } from '../engine/meldValidation'
+import { planAiAppends, planAiDraw, planAiMelds, pickAiDiscard } from '../engine/aiPlayer'
 import {
   FLIP_DURATION_MS,
   getFlipAnchorRect,
@@ -667,7 +667,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const meld = team.melds.find((m) => m.id === meldId)
       if (!meld) return
 
-      const result = moveWildEdgeInSet(meld)
+      const result = moveWildInMeldEngine(meld)
       if (!result.ok) {
         set({ lastActionError: result.error })
         return
@@ -985,26 +985,100 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
 
   const handAnchor = `hand-${activeId}`
 
-  // ----- 1) Draw from stock (face-down flight stock → bot hand stack) -----
+  // ----- 1) Draw: stock, OR Top Touch when it enables an immediate meld -----
   {
     const latest = get()
-    if (!latest.game || isCancelled()) return
-    let stock = latest.game.stock
+    if (!latest.game || !latest.room || isCancelled()) return
+    const liveTeam = findTeamForPlayer(latest.room, activeId)
+    if (!liveTeam) return
     let hand = latest.game.hands[activeId]
-    if (stock.length > 0) {
+    let melds = liveTeam.melds
+    const drawPlan = planAiDraw(hand, melds, latest.game.discardPile.cards, liveTeam.id)
+
+    if (drawPlan.source === 'top-touch' && latest.game.discardPile.cards.length > 0) {
+      const discardPile = latest.game.discardPile.cards
+      const topId = discardPile[discardPile.length - 1].id
+      const result = attemptMeldAction({
+        hand,
+        team: liveTeam,
+        selectedHandCardIds: drawPlan.handCardIds,
+        targetMeldId: drawPlan.targetMeldId,
+        topTouch: { discardPile, selectedDiscardIds: [topId] },
+      })
+      if (result.ok) {
+        for (const card of result.usedDiscardCards) {
+          seedFlipOriginFromAnchor(card.id, 'discard')
+        }
+        for (const id of drawPlan.handCardIds) seedFlipOriginFromAnchor(id, handAnchor)
+        const usedCount = result.usedDiscardCards.length
+        const restOfPile = discardPile.slice(0, discardPile.length - usedCount)
+        const meldsAfter =
+          result.kind === 'append'
+            ? liveTeam.melds.map((m) => (m.id === result.meld.id ? result.meld : m))
+            : [...liveTeam.melds, result.meld]
+        // Remainder of the pile joins the hand (same as human Top Touch success).
+        const combinedHand = sortHand([...result.hand, ...restOfPile])
+        const nextRoom = withTeam(latest.room, liveTeam.id, (t) => ({ ...t, melds: meldsAfter }))
+        const handRect = getFlipAnchorRect(handAnchor)
+        const discardRect = getFlipAnchorRect('discard')
+        if (discardRect && handRect) {
+          for (const _card of restOfPile) {
+            void playDetachedCardFlight({ from: discardRect, to: handRect, faceDown: true })
+          }
+        }
+        set({
+          room: nextRoom,
+          game: {
+            ...latest.game,
+            hands: { ...latest.game.hands, [activeId]: combinedHand },
+            discardPile: { cards: [] },
+            turn: { ...latest.game.turn, phase: 'action', hasDrawnThisTurn: true },
+            lastAcquired: {
+              playerId: activeId,
+              cardIds: [...result.usedDiscardCards.map((c) => c.id), ...restOfPile.map((c) => c.id)],
+              at: Date.now(),
+            },
+          },
+        })
+        await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
+        if (isCancelled()) return
+      } else if (latest.game.stock.length > 0) {
+        // Top Touch plan failed validation at apply-time — fall back to stock.
+        const stockRect = getFlipAnchorRect('stock')
+        const handRect = getFlipAnchorRect(handAnchor)
+        const drawResult = performDrawFromStock(latest.game.stock, hand)
+        if (stockRect && handRect && drawResult.drawnCard) {
+          void playDetachedCardFlight({ from: stockRect, to: handRect, faceDown: true })
+        }
+        set({
+          game: {
+            ...latest.game,
+            stock: drawResult.stock,
+            hands: { ...latest.game.hands, [activeId]: sortHand(drawResult.hand) },
+            turn: { ...latest.game.turn, phase: 'action', hasDrawnThisTurn: true },
+            lastAcquired: {
+              playerId: activeId,
+              cardIds: drawResult.drawnCard ? [drawResult.drawnCard.id] : [],
+              at: Date.now(),
+            },
+          },
+        })
+        await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
+        if (isCancelled()) return
+      }
+    } else if (latest.game.stock.length > 0) {
       const stockRect = getFlipAnchorRect('stock')
       const handRect = getFlipAnchorRect(handAnchor)
-      const drawResult = performDrawFromStock(stock, hand)
-      stock = drawResult.stock
-      hand = drawResult.hand
+      const drawResult = performDrawFromStock(latest.game.stock, hand)
       if (stockRect && handRect && drawResult.drawnCard) {
         void playDetachedCardFlight({ from: stockRect, to: handRect, faceDown: true })
       }
       set({
         game: {
           ...latest.game,
-          stock,
-          hands: { ...latest.game.hands, [activeId]: sortHand(hand) },
+          stock: drawResult.stock,
+          hands: { ...latest.game.hands, [activeId]: sortHand(drawResult.hand) },
+          turn: { ...latest.game.turn, phase: 'action', hasDrawnThisTurn: true },
           lastAcquired: {
             playerId: activeId,
             cardIds: drawResult.drawnCard ? [drawResult.drawnCard.id] : [],
@@ -1017,8 +1091,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
     }
   }
 
-  // Plan melds/appends/discard against the post-draw hand (single plan pass
-  // so later steps don't re-greedily invent new melds mid-turn).
+  // Plan melds/appends/discard against the post-draw hand.
   {
     const latest = get()
     if (!latest.game || !latest.room || isCancelled()) return
@@ -1028,7 +1101,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
     let melds = currentTeam.melds
 
     const meldPlans = planAiMelds(hand, currentTeam.id)
-    // ----- 2) Lay each planned set, one animated action at a time -----
+    // ----- 2) Lay each planned set/sequence, one animated action at a time -----
     for (const plan of meldPlans.plans) {
       const snap = get()
       if (!snap.game || !snap.room || isCancelled()) return
@@ -1039,7 +1112,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
       const cards = hand.filter((c) => plan.cardIds.includes(c.id))
       if (cards.length !== plan.cardIds.length) continue
       for (const card of cards) seedFlipOriginFromAnchor(card.id, handAnchor)
-      const built = createMeldFromHand(hand, plan.cardIds, 'set', liveTeam.id)
+      const built = createMeldFromHand(hand, plan.cardIds, plan.kind, liveTeam.id)
       if (!built.ok) continue
       hand = built.hand
       melds = [...melds, built.meld]

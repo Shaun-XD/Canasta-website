@@ -1,6 +1,6 @@
 import type { Meld, MeldClassification, Team } from '../types/game'
 import { meldCards } from '../types/game'
-import { wildEdgeInSet } from '../engine/meldValidation'
+import { getWildMoveInfo } from '../engine/meldValidation'
 import { AnimatedCard } from './AnimatedCard'
 
 const CLASSIFICATION_LABEL: Record<MeldClassification, string> = {
@@ -83,8 +83,13 @@ function MeldFan({
 }) {
   const cards = meldCards(meld)
   const label = meld.type === 'set' ? `${meld.rank}s` : `${meld.suit} run`
-  const wildEdge = wildEdgeInSet(meld)
-  const showMoveWild = canModify && selected && !!wildEdge && !!onMoveWild
+  const wildMove = getWildMoveInfo(meld)
+  // Also show Move Wild for a same-suit natural 2 in a sequence (it can be
+  // reinterpreted as a wild on an open end) — getWildMoveInfo covers that.
+  const showMoveWild = canModify && selected && !!wildMove && !!onMoveWild
+  const hasMovableTwo =
+    meld.type === 'sequence' &&
+    meld.slots.some((s) => s.card.rank === '2' && s.card.suit === meld.suit && s.slotRank === '2' && !s.isWildFill)
 
   return (
     <div className="relative flex flex-col items-center gap-1">
@@ -114,9 +119,9 @@ function MeldFan({
             {CLASSIFICATION_LABEL[meld.classification]}
           </span>
         )}
-        {meld.wildCount > 0 && !meld.isCanasta && (
+        {(meld.wildCount > 0 || hasMovableTwo) && !meld.isCanasta && (
           <span className="absolute -bottom-1 -right-1 rounded-full bg-purple-400 px-1 py-0.5 text-[8px] font-bold text-purple-950 shadow">
-            WILD
+            {meld.wildCount > 0 ? 'WILD' : '2★'}
           </span>
         )}
       </button>
@@ -127,7 +132,7 @@ function MeldFan({
             e.stopPropagation()
             onMoveWild?.(meld.id)
           }}
-          title={`Move the wild card to the ${wildEdge === 'front' ? 'back' : 'front'} of this meld`}
+          title={wildMove!.nextLabel}
           className="rounded-full bg-purple-400/90 px-2 py-0.5 text-[10px] font-semibold text-purple-950 shadow transition hover:bg-purple-300"
         >
           Move Wild

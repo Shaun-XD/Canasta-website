@@ -6,7 +6,9 @@ import {
   buildSet,
   canAppendToMeld,
   canAppendToSet,
+  getWildMoveInfo,
   moveWildEdgeInSet,
+  moveWildInMeld,
   wildEdgeInSet,
 } from './meldValidation'
 import { c, joker } from './testHelpers'
@@ -391,7 +393,7 @@ describe('moveWildEdgeInSet (item 7 - Move Wild)', () => {
     expect(moved.meld.slots.map((s) => s.card.id).sort()).toEqual(built.meld.slots.map((s) => s.card.id).sort())
   })
 
-  it('is a no-op error for Sequences (order is rules-significant there, not cosmetic)', () => {
+  it('set-only helper still rejects Sequences (use moveWildInMeld for sequence relocation)', () => {
     const built = buildSequence([c('5', 'diamonds'), c('6', 'diamonds'), joker()], 'team-a')
     if (!built.ok) throw new Error('setup failed')
     expect(wildEdgeInSet(built.meld)).toBeNull()
@@ -410,6 +412,52 @@ describe('moveWildEdgeInSet (item 7 - Move Wild)', () => {
     const midWildMeld = { ...m.meld, slots }
     expect(wildEdgeInSet(midWildMeld)).toBeNull()
     expect(moveWildEdgeInSet(midWildMeld).ok).toBe(false)
+  })
+})
+
+describe('moveWildInMeld on Sequences (reinterpret natural 2 as wild)', () => {
+  it('offers Move Wild for a 2-3-4 same-suit run where the 2 is natural', () => {
+    const built = buildSequence([c('2', 'diamonds'), c('3', 'diamonds'), c('4', 'diamonds')], 'team-a')
+    if (!built.ok) throw new Error('setup failed')
+    expect(built.meld.wildCount).toBe(0)
+    expect(getWildMoveInfo(built.meld)).not.toBeNull()
+  })
+
+  it('relocates the natural 2♦ to a wild 5-slot so a 6♦ can then be appended', () => {
+    const built = buildSequence([c('2', 'diamonds'), c('3', 'diamonds'), c('4', 'diamonds')], 'team-a')
+    if (!built.ok) throw new Error('setup failed')
+
+    // Before moving, 6♦ cannot append (gap at 5).
+    expect(canAppendToMeld(built.meld, c('6', 'diamonds'))).toBe(false)
+
+    const moved = moveWildInMeld(built.meld)
+    expect(moved.ok).toBe(true)
+    if (!moved.ok) return
+    // 3-4-5[2 as wild]
+    expect(moved.meld.slots.map((s) => s.slotRank)).toEqual(['3', '4', '5'])
+    expect(moved.meld.wildCount).toBe(1)
+    expect(moved.meld.slots[2].isWildFill).toBe(true)
+    expect(moved.meld.slots[2].card.rank).toBe('2')
+
+    expect(canAppendToMeld(moved.meld, c('6', 'diamonds'))).toBe(true)
+    const appended = appendToMeld(moved.meld, c('6', 'diamonds'))
+    expect(appended.ok).toBe(true)
+    if (!appended.ok) return
+    expect(appended.meld.slots.map((s) => s.slotRank)).toEqual(['3', '4', '5', '6'])
+  })
+
+  it('cycles a sequence wild back toward the natural-2 placement', () => {
+    const built = buildSequence([c('2', 'diamonds'), c('3', 'diamonds'), c('4', 'diamonds')], 'team-a')
+    if (!built.ok) throw new Error('setup failed')
+    const once = moveWildInMeld(built.meld)
+    expect(once.ok).toBe(true)
+    if (!once.ok) return
+    const twice = moveWildInMeld(once.meld)
+    expect(twice.ok).toBe(true)
+    if (!twice.ok) return
+    // Back to natural 2-3-4 (or another legal end — at minimum still 3 cards, 1 movable).
+    expect(twice.meld.slots.length).toBe(3)
+    expect(getWildMoveInfo(twice.meld)).not.toBeNull()
   })
 })
 
