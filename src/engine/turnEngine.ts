@@ -137,6 +137,21 @@ export function performTopTouch(params: {
 // Unified meld action (single "Meld" button - see item 3/5/8)
 // ---------------------------------------------------------------------------
 
+export interface TopTouchSelection {
+  /** The full discard pile, oldest-first / most-recent (top) last - same shape as `GameState['discardPile'].cards`. */
+  discardPile: CardModel[]
+  /**
+   * Ids of the discard-pile cards the player has selected as candidates.
+   * Must form a contiguous run counting down from the top of the pile (the
+   * player can only ever "take" cards top-down, never skip into the
+   * middle), and must include the top/most-recent card's id - that is the
+   * core Top Touch rule: you cannot pick up the pile at all unless the top
+   * card specifically is part of the winning meld. Both constraints are
+   * validated here rather than trusted from the caller.
+   */
+  selectedDiscardIds: string[]
+}
+
 export interface MeldActionParams {
   hand: CardModel[]
   team: Team
@@ -145,45 +160,89 @@ export interface MeldActionParams {
   /** An existing meld group the player has targeted to append to, or null to create a new meld. */
   targetMeldId: string | null
   /**
-   * The top discard pile card, when this action is the "propose a meld with
-   * the top card" step of a two-phase Top Touch (see item 5). Combined with
-   * `selectedHandCardIds` as an extra candidate card; null for a normal
-   * in-hand-only meld action.
+   * Present when this action is the "propose a meld with the top of the
+   * discard pile" step of a two-phase Top Touch (see item 5). The selected
+   * discard cards are combined with `selectedHandCardIds` as extra
+   * candidate cards; omit/null for a normal in-hand-only meld action.
    */
-  topTouchCard?: CardModel | null
+  topTouch?: TopTouchSelection | null
   /** Only meaningful for a single-card append to a Sequence; see the Slide mechanic. */
   slideEdge?: 'top' | 'bottom'
 }
 
 export type MeldActionResult =
-  | { ok: true; kind: 'new-meld'; hand: CardModel[]; meld: Meld }
-  | { ok: true; kind: 'append'; hand: CardModel[]; meld: Meld }
+  | { ok: true; kind: 'new-meld'; hand: CardModel[]; meld: Meld; usedDiscardCards: CardModel[] }
+  | { ok: true; kind: 'append'; hand: CardModel[]; meld: Meld; usedDiscardCards: CardModel[] }
   | { ok: false; error: string; needsSlideChoice?: { displacedWildCardId: string } }
+
+/**
+ * Resolves a Top Touch selection into the ordered list of discard cards it
+ * refers to, enforcing that the selection is a contiguous top-down run
+ * which includes the top card. Returns an error string on any violation.
+ */
+function resolveTopTouchCards(selection: TopTouchSelection): { ok: true; cards: CardModel[] } | { ok: false; error: string } {
+  const { discardPile, selectedDiscardIds } = selection
+  if (discardPile.length === 0) {
+    return { ok: false, error: 'Discard pile is empty.' }
+  }
+  if (selectedDiscardIds.length === 0) {
+    return { ok: false, error: 'The top discard card must be included in the meld.' }
+  }
+  const topCard = discardPile[discardPile.length - 1]
+  if (!selectedDiscardIds.includes(topCard.id)) {
+    return { ok: false, error: 'The top discard card must be included in the meld.' }
+  }
+
+  // Walk down from the top counting how many consecutive cards are selected;
+  // that run must account for the entire selection (no gaps, no cards
+  // selected from further down without everything above them also selected).
+  let runLength = 0
+  const selectedSet = new Set(selectedDiscardIds)
+  for (let i = discardPile.length - 1; i >= 0; i -= 1) {
+    if (!selectedSet.has(discardPile[i].id)) break
+    runLength += 1
+  }
+  if (runLength !== selectedDiscardIds.length) {
+    return { ok: false, error: 'Discard selection must be a contiguous run starting from the top of the pile.' }
+  }
+
+  return { ok: true, cards: discardPile.slice(discardPile.length - runLength) }
+}
 
 /**
  * The single entry point behind the unified "Meld" button (item 3) and the
  * "Meld with Top Card" step of the two-phase Top Touch flow (item 5).
  *
  * - If `targetMeldId` is set, every candidate card (selected hand cards,
- *   plus the top discard card if this is a Top Touch proposal) is appended
- *   to that meld in turn. This also transparently covers the wild-swap case
- *   (item 8): appending a natural card that matches a Sequence's
- *   wild-occupied slot triggers the existing Slide mechanic, which
- *   naturalizes that slot and relocates the wild to an edge - the wild
- *   remains in the meld and can then be repositioned via Move Wild (item 7,
- *   Sets only).
+ *   plus any selected Top Touch discard cards) is appended to that meld in
+ *   turn. This also transparently covers the wild-swap case (item 8):
+ *   appending a natural card that matches a Sequence's wild-occupied slot
+ *   triggers the existing Slide mechanic, which naturalizes that slot and
+ *   relocates the wild to an edge - the wild remains in the meld and can
+ *   then be repositioned via Move Wild (item 7, Sets only).
  * - If `targetMeldId` is null, the candidate cards must form a legal new Set
  *   or Sequence on their own; the type is auto-detected (Set is tried
- *   first, then Sequence) rather than pre-declared by the user.
+ *   first, then Sequence) rather than pre-declared by the user. There is no
+ *   separate minimum-card-count gate here beyond what `buildSet` /
+ *   `buildSequence` themselves require (3+) - the only real constraint is
+ *   "the combined candidate set forms a legal meld or legal append".
  */
 export function attemptMeldAction(params: MeldActionParams): MeldActionResult {
-  const { hand, team, selectedHandCardIds, targetMeldId, topTouchCard = null, slideEdge } = params
+  const { hand, team, selectedHandCardIds, targetMeldId, topTouch = null, slideEdge } = params
 
   const selected = hand.filter((c) => selectedHandCardIds.includes(c.id))
   if (selected.length !== selectedHandCardIds.length) {
     return { ok: false, error: 'Selected cards are not all in hand.' }
   }
-  const candidateCards = topTouchCard ? [...selected, topTouchCard] : selected
+
+  let topTouchCards: CardModel[] = []
+  if (topTouch) {
+    const resolved = resolveTopTouchCards(topTouch)
+    if (!resolved.ok) return { ok: false, error: resolved.error }
+    topTouchCards = resolved.cards
+  }
+
+  const candidateCards = [...selected, ...topTouchCards]
   if (candidateCards.length === 0) {
     return { ok: false, error: 'Select at least one card to meld.' }
   }
@@ -194,10 +253,11 @@ export function attemptMeldAction(params: MeldActionParams): MeldActionResult {
     if (!meld) return { ok: false, error: 'Target meld not found on your team.' }
 
     // A single hand-only append (the common case) preserves the original
-    // slide-choice prompt UX; combining multiple cards or a Top Touch card
-    // auto-resolves any Slide to the top edge rather than pausing for a
-    // mid-pickup UI prompt (mirrors the prior Top Touch behavior).
-    const autoResolveSlide = !!topTouchCard || candidateCards.length > 1
+    // slide-choice prompt UX; combining multiple cards or any Top Touch
+    // discard cards auto-resolves any Slide to the top edge rather than
+    // pausing for a mid-pickup UI prompt (mirrors the prior Top Touch
+    // behavior).
+    const autoResolveSlide = topTouchCards.length > 0 || candidateCards.length > 1
     const effectiveSlideEdge = slideEdge ?? (autoResolveSlide ? 'top' : undefined)
 
     let working = meld
@@ -211,19 +271,16 @@ export function attemptMeldAction(params: MeldActionParams): MeldActionResult {
       }
       working = result.meld
     }
-    return { ok: true, kind: 'append', hand: remainingHand, meld: working }
+    return { ok: true, kind: 'append', hand: remainingHand, meld: working, usedDiscardCards: topTouchCards }
   }
 
-  if (candidateCards.length < 3) {
-    return { ok: false, error: 'Select at least 3 cards to form a new meld (or pick a meld group above to append to).' }
-  }
   const setResult = buildSet(candidateCards, team.id)
   if (setResult.ok) {
-    return { ok: true, kind: 'new-meld', hand: remainingHand, meld: setResult.meld }
+    return { ok: true, kind: 'new-meld', hand: remainingHand, meld: setResult.meld, usedDiscardCards: topTouchCards }
   }
   const seqResult = buildSequence(candidateCards, team.id)
   if (seqResult.ok) {
-    return { ok: true, kind: 'new-meld', hand: remainingHand, meld: seqResult.meld }
+    return { ok: true, kind: 'new-meld', hand: remainingHand, meld: seqResult.meld, usedDiscardCards: topTouchCards }
   }
   return { ok: false, error: 'Not a legal Set or Sequence with those cards.' }
 }

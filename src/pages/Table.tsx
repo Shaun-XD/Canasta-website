@@ -24,6 +24,7 @@ export function Table() {
   const selectedCardIds = useGameStore((s) => s.selectedCardIds)
   const selectedMeldId = useGameStore((s) => s.selectedMeldId)
   const topTouchInProgress = useGameStore((s) => s.topTouchInProgress)
+  const selectedDiscardCount = useGameStore((s) => s.selectedDiscardCount)
   const lastActionError = useGameStore((s) => s.lastActionError)
   const {
     toggleSelectCard,
@@ -31,6 +32,7 @@ export function Table() {
     drawFromStock,
     beginTopTouch,
     cancelTopTouch,
+    toggleDiscardPileCard,
     attemptMeld,
     moveWildInMeld,
     resolveSlide,
@@ -111,6 +113,13 @@ export function Table() {
     }
   }
 
+  // Item 6: local-only drag-to-reorder for the player's hand row. Must run
+  // unconditionally (before any early returns) per the rules of hooks - the
+  // id list is simply empty until the table/hand actually exists.
+  const rawLocalHand = game && localPlayerId ? game.hands[localPlayerId] ?? [] : []
+  const { order: handOrder, draggingId, handlePointerDown: handleCardPointerDown, handlePointerEnter: handleCardPointerEnter } =
+    useHandReorder(rawLocalHand.map((c) => c.id))
+
   if (!room || room.roomId !== roomId) return <Navigate to="/" replace />
   if (room.status === 'lobby') return <Navigate to={`/lobby/${roomId}`} replace />
   if (!game || !seating) {
@@ -123,7 +132,8 @@ export function Table() {
 
   const localPlayer = room.players.find((p) => p.id === localPlayerId)
   const localTeam = room.teams.find((t) => t.playerIds.includes(localPlayerId ?? ''))
-  const localHand = game.hands[localPlayerId!] ?? []
+  const localHand = rawLocalHand
+  const orderedLocalHand = handOrder.map((id) => localHand.find((c) => c.id === id)).filter((c): c is (typeof localHand)[number] => !!c)
   const activePlayer = room.players.find((p) => p.id === game.turn.activePlayerId)
   const topDiscard = game.discardPile.cards[game.discardPile.cards.length - 1]
 
@@ -152,23 +162,30 @@ export function Table() {
     )
   }
 
-  function handleLaySet() {
+  // Item 3 & 5: a single unified "Meld" action. When a Top Touch is in
+  // progress it combines the top discard card with the current selection;
+  // otherwise it works purely from the hand-card selection + optional
+  // targeted meld group. All the legality/auto-detection logic (new Set vs
+  // Sequence vs append, including the wild-swap case) lives in the store /
+  // engine - this just guards on turn/phase and lets the store report any
+  // failure via `lastActionError` (already wired to the shake/haptic effect).
+  function handleMeld() {
+    if (topTouchInProgress) {
+      if (selectedCardIds.length === 0 && !selectedMeldId) {
+        return reportInvalidAction('Select hand cards or a meld group to combine with the top discard card.')
+      }
+      attemptMeld()
+      return
+    }
     if (!isActionPhase) return reportInvalidAction('You can only meld during your action phase (after drawing).')
-    if (selectedCardIds.length < 3) return reportInvalidAction('Select at least 3 cards of the same rank to lay a Set.')
-    createMeldFromSelection('set')
+    if (selectedCardIds.length === 0) return reportInvalidAction('Select hand cards to meld.')
+    attemptMeld()
   }
 
-  function handleLaySequence() {
-    if (!isActionPhase) return reportInvalidAction('You can only meld during your action phase (after drawing).')
-    if (selectedCardIds.length < 3) return reportInvalidAction('Select at least 3 consecutive same-suit cards to lay a Sequence.')
-    createMeldFromSelection('sequence')
-  }
-
-  function handleAppendToMeld() {
-    if (!isActionPhase) return reportInvalidAction('You can only meld during your action phase (after drawing).')
-    if (selectedCardIds.length !== 1) return reportInvalidAction('Select exactly 1 hand card to append.')
-    if (!selectedMeldId) return reportInvalidAction("Select one of your team's melds above to append to.")
-    appendSelectedCardToMeld(selectedMeldId)
+  function handleBeginTopTouch() {
+    if (!isDrawPhase) return reportInvalidAction('You can only Top Touch during your draw phase.')
+    if (!topDiscard) return reportInvalidAction('The discard pile is empty.')
+    beginTopTouch()
   }
 
   return (
@@ -242,9 +259,11 @@ export function Table() {
               <MeldArea
                 team={team}
                 align={team.id === room.teams[0].id ? 'left' : 'right'}
-                selectable={isActionPhase && localTeam?.id === team.id}
+                selectable={(isActionPhase || topTouchInProgress) && localTeam?.id === team.id}
                 selectedMeldId={selectedMeldId}
                 onSelectMeld={(id) => selectMeldTarget(selectedMeldId === id ? null : id)}
+                canModify={isLocalTurn && localTeam?.id === team.id}
+                onMoveWild={moveWildInMeld}
               />
             </div>
           ))}
@@ -269,57 +288,53 @@ export function Table() {
               <button
                 ref={stockRef}
                 type="button"
-                disabled={!isDrawPhase || stockDepleted}
+                disabled={!isDrawPhase || stockDepleted || topTouchInProgress}
                 onClick={handleDrawFromStock}
                 className="disabled:opacity-50"
                 title="Draw from stock"
+                data-flip-anchor="stock"
               >
                 <Card faceDown width={DISCARD_CARD_WIDTH} />
               </button>
               <span className="text-[11px] text-white/50">Stock ({game.stock.length})</span>
             </div>
 
-            <div className="flex flex-col items-center gap-1">
-              <DiscardPileView cards={game.discardPile.cards} />
+            <div className="flex flex-col items-center gap-1" data-flip-anchor="discard">
+              <DiscardPileView
+                cards={game.discardPile.cards}
+                topCardInteractive={isDrawPhase && !topTouchInProgress}
+                onTopCardClick={handleBeginTopTouch}
+                topTouchInProgress={topTouchInProgress}
+                selectedDiscardCount={selectedDiscardCount}
+                onToggleDiscardCard={toggleDiscardPileCard}
+              />
               <span className="text-[11px] text-white/50">Discard ({game.discardPile.cards.length})</span>
             </div>
           </div>
 
-          {isDrawPhase && topDiscard && (
-            <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
-              <span className="text-white/50">Top Touch:</span>
+          {/* Item 5: two-phase Top Touch. Tapping the top discard card
+              (above) proposes it; the player then picks hand cards, and/or
+              additional discard cards below the top one (see item 1: only a
+              contiguous top-down run can be selected, since you can only
+              take from the top of the pile), and/or a meld group, then
+              confirms with the same unified Meld button below. Only on
+              success does the rest of the pile join the hand - nothing is
+              granted just for entering this mode. */}
+          {isDrawPhase && !topTouchInProgress && topDiscard && (
+            <p className="text-center text-[11px] text-white/40">Tap the top discard card to Top Touch it.</p>
+          )}
+          {topTouchInProgress && (
+            <div className="flex flex-col items-center gap-1 rounded-lg bg-amber-400/10 px-3 py-2 ring-1 ring-amber-300/30">
+              <p className="text-center text-xs font-medium text-amber-200">
+                Top Touch in progress — select hand cards, more discard cards below the top one, and/or a meld group
+                above, then Meld.
+              </p>
               <button
                 type="button"
-                onClick={() =>
-                  selectedCardIds.length < 2
-                    ? reportInvalidAction('Select at least 2 hand cards to combine with the top discard.')
-                    : attemptTopTouch('newSet')
-                }
-                className="rounded-md bg-blue-500/80 px-2 py-1 font-medium hover:bg-blue-400"
+                onClick={cancelTopTouch}
+                className="rounded-md bg-white/10 px-2 py-1 text-[11px] font-medium text-white/70 hover:bg-white/20"
               >
-                As new Set
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  selectedCardIds.length < 2
-                    ? reportInvalidAction('Select at least 2 hand cards to combine with the top discard.')
-                    : attemptTopTouch('newSequence')
-                }
-                className="rounded-md bg-blue-500/80 px-2 py-1 font-medium hover:bg-blue-400"
-              >
-                As new Sequence
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  !selectedMeldId
-                    ? reportInvalidAction("Select one of your team's melds above to Top Touch onto.")
-                    : attemptTopTouch('append')
-                }
-                className="rounded-md bg-blue-500/80 px-2 py-1 font-medium hover:bg-blue-400"
-              >
-                Append to selected meld
+                Cancel Top Touch
               </button>
             </div>
           )}
@@ -368,25 +383,11 @@ export function Table() {
               </button>
               <button
                 type="button"
-                onClick={handleLaySet}
+                onClick={handleMeld}
                 className="rounded-lg bg-blue-500/90 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-blue-400"
+                title="Select hand cards (and optionally one of your team's melds above to append to or a natural card to swap in for a wild)"
               >
-                Lay Set
-              </button>
-              <button
-                type="button"
-                onClick={handleLaySequence}
-                className="rounded-lg bg-indigo-500/90 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-400"
-              >
-                Lay Sequence
-              </button>
-              <button
-                type="button"
-                onClick={handleAppendToMeld}
-                className="rounded-lg bg-teal-500/90 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-teal-400"
-                title="Select 1 hand card + 1 of your team's melds above"
-              >
-                Append to Meld
+                {topTouchInProgress ? 'Meld with Top Card' : 'Meld'}
               </button>
               <button
                 type="button"
@@ -414,19 +415,24 @@ export function Table() {
               fully instead of being clipped by this scroll container
               (item 5). */}
           <div className="flex max-w-full items-end overflow-x-auto overflow-y-visible px-4 pb-2 pt-6 scrollbar-thin">
-            {localHand.map((card) => (
-              <AnimatedCard
+            {orderedLocalHand.map((card, i) => (
+              <div
                 key={card.id}
-                flipId={card.id}
-                rank={card.rank}
-                suit={card.suit}
-                width={68}
-                selected={selectedCardIds.includes(card.id)}
-                isNew={isRecentlyAcquired(card.id)}
-                onClick={() => toggleSelectCard(card.id)}
-                style={{ marginLeft: -14 }}
-                wrapperClassName="first:ml-0"
-              />
+                onPointerDown={() => handleCardPointerDown(card.id)}
+                onPointerEnter={() => handleCardPointerEnter(card.id)}
+                className={`inline-block touch-none transition-opacity ${draggingId === card.id ? 'opacity-70' : ''}`}
+                style={{ marginLeft: i === 0 ? 0 : -14 }}
+              >
+                <AnimatedCard
+                  flipId={card.id}
+                  rank={card.rank}
+                  suit={card.suit}
+                  width={68}
+                  selected={selectedCardIds.includes(card.id)}
+                  isNew={isRecentlyAcquired(card.id)}
+                  onClick={() => toggleSelectCard(card.id)}
+                />
+              </div>
             ))}
           </div>
         </div>
@@ -517,7 +523,7 @@ function OpponentBadge({
         </p>
         <p className="text-[10px] text-white/50">Seat {player.seat + 1}</p>
       </div>
-      <MiniCardStack count={cardCount} />
+      <MiniCardStack count={cardCount} flipAnchorId={`hand-${player.id}`} />
       {isActive && remainingSeconds != null && <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />}
     </div>
   )

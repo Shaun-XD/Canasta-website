@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /**
  * Lightweight, dependency-free drag-to-reorder for the player's own hand
@@ -21,7 +21,16 @@ export function useHandReorder(cardIds: string[]) {
   // Reconcile the local order with the authoritative hand whenever cards are
   // added (drawn/picked up) or removed (melded/discarded), while preserving
   // whatever manual arrangement the player has made of the cards that remain.
-  useEffect(() => {
+  //
+  // This must be a `useLayoutEffect`, not `useEffect`: a plain `useEffect`
+  // runs (and its `setOrder` commits) only after the browser has already
+  // painted the render that's missing the newly-drawn card, so the card's
+  // `AnimatedCard` doesn't actually mount - and therefore doesn't seed/play
+  // its FLIP-in animation - until a second, later paint. Reconciling
+  // synchronously in a layout effect instead means the new card mounts (and
+  // its flight plays) in the very same commit as the store update that
+  // added it, with nothing skipped in between.
+  useLayoutEffect(() => {
     setOrder((prev) => {
       const stillHeld = prev.filter((id) => cardIds.includes(id))
       const newlyAdded = cardIds.filter((id) => !stillHeld.includes(id))

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { Team } from '../types/game'
-import { performDiscard, performDrawFromStock, performTopTouch } from './turnEngine'
-import { buildSet } from './meldValidation'
+import { attemptMeldAction, performDiscard, performDrawFromStock, performTopTouch } from './turnEngine'
+import { buildSequence, buildSet } from './meldValidation'
 import { initialPozzettoState } from './pozzetto'
-import { c } from './testHelpers'
+import { c, joker } from './testHelpers'
 
 function makeTeam(id: 'team-a' | 'team-b'): Team {
   return {
@@ -108,6 +108,227 @@ describe('performTopTouch', () => {
       plan: { kind: 'append', targetMeldId: 'nonexistent' },
     })
     expect(result.success).toBe(false)
+  })
+})
+
+describe('attemptMeldAction (the unified "Meld" action - items 3, 5 & 8)', () => {
+  it('creates a new Set from hand cards alone, auto-detecting the type', () => {
+    const team = makeTeam('team-a')
+    const hand = [c('8', 'hearts'), c('8', 'spades'), c('8', 'clubs')]
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: hand.map((card) => card.id),
+      targetMeldId: null,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.kind).toBe('new-meld')
+      expect(result.meld.type).toBe('set')
+      expect(result.hand.length).toBe(0)
+    }
+  })
+
+  it('creates a new Sequence from hand cards alone, auto-detecting the type', () => {
+    const team = makeTeam('team-a')
+    const hand = [c('5', 'diamonds'), c('6', 'diamonds'), c('7', 'diamonds')]
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: hand.map((card) => card.id),
+      targetMeldId: null,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.meld.type).toBe('sequence')
+  })
+
+  it('rejects a new-meld attempt with fewer than 3 candidate cards', () => {
+    const team = makeTeam('team-a')
+    const hand = [c('8', 'hearts'), c('8', 'spades')]
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: hand.map((card) => card.id),
+      targetMeldId: null,
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('appends selected hand cards to a targeted existing meld group', () => {
+    const existing = buildSet([c('9', 'hearts'), c('9', 'spades'), c('9', 'clubs')], 'team-a')
+    if (!existing.ok) throw new Error('setup failed')
+    const team: Team = { ...makeTeam('team-a'), melds: [existing.meld] }
+    const hand = [c('9', 'diamonds')]
+
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: [hand[0].id],
+      targetMeldId: existing.meld.id,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.kind).toBe('append')
+      expect(result.meld.slots.length).toBe(4)
+      expect(result.hand.length).toBe(0)
+    }
+  })
+
+  it('proposes a meld combining the top discard card with selected hand cards into a new meld', () => {
+    const team = makeTeam('team-a')
+    const hand = [c('8', 'hearts'), c('8', 'spades')]
+    const discardPile = [c('A', 'hearts'), c('8', 'clubs')]
+    const topCard = discardPile[discardPile.length - 1]
+
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: hand.map((card) => card.id),
+      targetMeldId: null,
+      topTouch: { discardPile, selectedDiscardIds: [topCard.id] },
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.meld.slots.length).toBe(3)
+      // The Top Touch card itself is never part of `hand` - only the
+      // selected hand cards are removed from it.
+      expect(result.hand.length).toBe(0)
+      expect(result.usedDiscardCards.map((card) => card.id)).toEqual([topCard.id])
+    }
+  })
+
+  it('proposes a meld combining the top discard card into a targeted existing meld', () => {
+    const existing = buildSet([c('9', 'hearts'), c('9', 'spades'), c('9', 'clubs')], 'team-a')
+    if (!existing.ok) throw new Error('setup failed')
+    const team: Team = { ...makeTeam('team-a'), melds: [existing.meld] }
+    const discardPile = [c('A', 'hearts'), c('9', 'diamonds')]
+    const topCard = discardPile[discardPile.length - 1]
+
+    const result = attemptMeldAction({
+      hand: [],
+      team,
+      selectedHandCardIds: [],
+      targetMeldId: existing.meld.id,
+      topTouch: { discardPile, selectedDiscardIds: [topCard.id] },
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.meld.slots.length).toBe(4)
+  })
+
+  it('fails without granting/consuming anything when the proposed Top Touch combination is illegal', () => {
+    const team = makeTeam('team-a')
+    const hand = [c('3', 'hearts'), c('5', 'spades')]
+    const discardPile = [c('K', 'clubs')]
+
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: hand.map((card) => card.id),
+      targetMeldId: null,
+      topTouch: { discardPile, selectedDiscardIds: [discardPile[0].id] },
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('builds a legal Set from the top discard card + a second (non-top) discard card + a hand card (the user-reported 5♦/5♣ scenario)', () => {
+    const team = makeTeam('team-a')
+    // Pile, top-down (most recent last): ... 5♦, 5♣ - i.e. 5♣ is the actual
+    // top/most-recent card, with 5♦ sitting just behind it.
+    const discardPile = [c('K', 'diamonds'), c('K', 'hearts'), c('5', 'diamonds'), c('5', 'clubs')]
+    const hand = [c('5', 'diamonds')]
+
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: [hand[0].id],
+      targetMeldId: null,
+      topTouch: {
+        discardPile,
+        selectedDiscardIds: [discardPile[2].id, discardPile[3].id], // 5♦ + 5♣, contiguous from the top
+      },
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.kind).toBe('new-meld')
+      expect(result.meld.type).toBe('set')
+      expect(result.meld.rank).toBe('5')
+      expect(result.meld.slots.length).toBe(3)
+      expect(result.usedDiscardCards.map((card) => card.id)).toEqual([discardPile[2].id, discardPile[3].id])
+      // Both discard cards are consumed by the meld directly - neither ever
+      // passes through `hand`.
+      expect(result.hand.length).toBe(0)
+    }
+  })
+
+  it('rejects a Top Touch selection that does not include the top/most-recent discard card', () => {
+    const team = makeTeam('team-a')
+    const discardPile = [c('K', 'diamonds'), c('K', 'hearts'), c('5', 'diamonds'), c('5', 'clubs')]
+    const hand = [c('5', 'diamonds')]
+
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: [hand[0].id],
+      targetMeldId: null,
+      // Only the second-from-top card is selected - the actual top card
+      // (5♣) is missing, which must be rejected even though 5♦+5♦ alone
+      // would otherwise be a legal pair-toward-a-set.
+      topTouch: { discardPile, selectedDiscardIds: [discardPile[2].id] },
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('rejects a non-contiguous Top Touch discard selection (skipping over a middle card)', () => {
+    const team = makeTeam('team-a')
+    const discardPile = [c('K', 'diamonds'), c('9', 'hearts'), c('5', 'diamonds'), c('5', 'clubs')]
+    const hand = [c('5', 'diamonds')]
+
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: [hand[0].id],
+      targetMeldId: null,
+      // Includes the top card and the K, but skips the 9 in between -
+      // not a valid contiguous top-down run.
+      topTouch: { discardPile, selectedDiscardIds: [discardPile[0].id, discardPile[3].id] },
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('performs a wild-swap via the Slide mechanic when appending a natural card that matches a wild-filled slot', () => {
+    const built = buildSequence([c('5', 'diamonds'), joker(), c('7', 'diamonds')], 'team-a')
+    if (!built.ok) throw new Error('setup failed')
+    const displacedWild = built.meld.slots.find((s) => s.isWildFill)!.card
+    const team: Team = { ...makeTeam('team-a'), melds: [built.meld] }
+    const natural6 = c('6', 'diamonds')
+
+    // A single natural hand-card append (no Top Touch card involved) still
+    // surfaces the slide-choice prompt rather than silently auto-resolving.
+    const proposal = attemptMeldAction({
+      hand: [natural6],
+      team,
+      selectedHandCardIds: [natural6.id],
+      targetMeldId: built.meld.id,
+    })
+    expect(proposal.ok).toBe(false)
+    if (proposal.ok) return
+    expect(proposal.needsSlideChoice?.displacedWildCardId).toBe(displacedWild.id)
+
+    const resolved = attemptMeldAction({
+      hand: [natural6],
+      team,
+      selectedHandCardIds: [natural6.id],
+      targetMeldId: built.meld.id,
+      slideEdge: 'top',
+    })
+    expect(resolved.ok).toBe(true)
+    if (!resolved.ok) return
+    const sixSlot = resolved.meld.slots.find((s) => s.slotRank === '6')
+    expect(sixSlot?.isWildFill).toBe(false)
+    // The freed wild stays in the meld, now sitting at an edge - ready to
+    // be repositioned via Move Wild (item 7, Sets only).
+    const wildStillPresent = resolved.meld.slots.some((s) => s.card.id === displacedWild.id)
+    expect(wildStillPresent).toBe(true)
   })
 })
 

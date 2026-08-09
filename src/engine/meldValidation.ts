@@ -96,53 +96,31 @@ export function buildSet(cards: CardModel[], ownerTeamId: TeamId): MeldResult {
 // Building a brand-new Sequence
 // ---------------------------------------------------------------------------
 
-export function buildSequence(cards: CardModel[], ownerTeamId: TeamId): MeldResult {
-  if (cards.length < 3) return { ok: false, error: 'A sequence needs at least 3 cards.' }
+type SequenceBuildAttempt = { ok: true; slots: MeldSlot[]; wildCount: number } | { ok: false; error: string }
 
-  const jokers = cards.filter((c) => c.rank === 'JOKER')
-  const others = cards.filter((c) => c.rank !== 'JOKER' && c.rank !== '2')
-  const twos = cards.filter((c) => c.rank === '2')
-
-  let suit: Suit
-  if (others.length > 0) {
-    suit = others[0].suit as Suit
-    if (!others.every((c) => c.suit === suit)) {
-      return { ok: false, error: 'A sequence must be a single suit.' }
-    }
-  } else if (twos.length > 0) {
-    suit = twos[0].suit as Suit
-  } else {
-    return {
-      ok: false,
-      error: 'Cannot form a sequence from wild cards alone - no suit established (illegal opening meld).',
-    }
-  }
-
-  // Determine which cards are "true naturals" at their own rank/suit slot.
-  // A 2 is only natural if it matches the sequence suit AND no other 2 has
-  // already claimed the '2' slot - any additional/mismatched 2s fall back
-  // to the wild pool (per section 3's "double duty" note, extra 2s from the
-  // second deck can still serve as plain wild fillers elsewhere).
-  const naturalsByOrder = new Map<number, CardModel>()
-  const wildPool: CardModel[] = [...jokers]
-
-  for (const card of others) {
-    const order = RANK_ORDER[card.rank]
-    if (naturalsByOrder.has(order)) {
-      return { ok: false, error: 'Duplicate rank in sequence - only one card may occupy each slot.' }
-    }
-    naturalsByOrder.set(order, card)
-  }
-
-  let placedNaturalTwo = false
-  for (const two of twos) {
-    const twoOrder = RANK_ORDER['2']
-    if (!placedNaturalTwo && two.suit === suit && !naturalsByOrder.has(twoOrder)) {
-      naturalsByOrder.set(twoOrder, two)
-      placedNaturalTwo = true
-    } else {
-      wildPool.push(two)
-    }
+/**
+ * Attempts to build the naturals-plus-wild-pool layout for a Sequence, given
+ * a fixed decision about how a same-suit 2 (if any) is being interpreted:
+ * `naturalTwo` is placed into its own literal '2' slot as a natural, while
+ * `extraTwos` (any other same-suit 2s beyond the one claiming the slot) join
+ * `wildPoolBase` as wild cards. Passing `naturalTwo: null` treats every
+ * same-suit 2 as a wild instead (they'll be found in `extraTwos`).
+ *
+ * This is the shared core of the old single-pass `buildSequence` logic,
+ * factored out so the caller can try both interpretations of an ambiguous
+ * same-suit 2 and keep whichever one is legal.
+ */
+function attemptSequenceBuild(
+  naturalsByOrderBase: Map<number, CardModel>,
+  naturalTwo: CardModel | null,
+  extraTwos: CardModel[],
+  wildPoolBase: CardModel[],
+  suit: Suit,
+): SequenceBuildAttempt {
+  const naturalsByOrder = new Map(naturalsByOrderBase)
+  const wildPool = [...wildPoolBase, ...extraTwos]
+  if (naturalTwo) {
+    naturalsByOrder.set(RANK_ORDER['2'], naturalTwo)
   }
 
   const naturalOrders = [...naturalsByOrder.keys()].sort((a, b) => a - b)
@@ -220,6 +198,72 @@ export function buildSequence(cards: CardModel[], ownerTeamId: TeamId): MeldResu
   if (wildCount > 1) {
     return { ok: false, error: 'A meld may contain at most 1 wild card.' }
   }
+
+  return { ok: true, slots, wildCount }
+}
+
+export function buildSequence(cards: CardModel[], ownerTeamId: TeamId): MeldResult {
+  if (cards.length < 3) return { ok: false, error: 'A sequence needs at least 3 cards.' }
+
+  const jokers = cards.filter((c) => c.rank === 'JOKER')
+  const others = cards.filter((c) => c.rank !== 'JOKER' && c.rank !== '2')
+  const twos = cards.filter((c) => c.rank === '2')
+
+  let suit: Suit
+  if (others.length > 0) {
+    suit = others[0].suit as Suit
+    if (!others.every((c) => c.suit === suit)) {
+      return { ok: false, error: 'A sequence must be a single suit.' }
+    }
+  } else if (twos.length > 0) {
+    suit = twos[0].suit as Suit
+  } else {
+    return {
+      ok: false,
+      error: 'Cannot form a sequence from wild cards alone - no suit established (illegal opening meld).',
+    }
+  }
+
+  // Determine which cards are "true naturals" at their own rank/suit slot.
+  // Non-2 naturals are unambiguous - build that base map first, and reject
+  // duplicate ranks immediately since no 2-placement choice can fix that.
+  const naturalsByOrderBase = new Map<number, CardModel>()
+  for (const card of others) {
+    const order = RANK_ORDER[card.rank]
+    if (naturalsByOrderBase.has(order)) {
+      return { ok: false, error: 'Duplicate rank in sequence - only one card may occupy each slot.' }
+    }
+    naturalsByOrderBase.set(order, card)
+  }
+
+  // A same-suit 2 is genuinely ambiguous: it can occupy its own literal '2'
+  // slot as a natural, OR it can serve double-duty as a wild filling a gap
+  // or extending an open end elsewhere in the run - whichever interpretation
+  // actually makes the selected cards legal. Off-suit 2s are unambiguous
+  // (always wild). Since only one card can ever claim the single '2' slot,
+  // there are only two interpretations worth trying: the first same-suit 2
+  // as the natural (today's default, tried first for backward
+  // compatibility) versus none of them as natural (all wild). Any
+  // additional same-suit 2s beyond the one claiming the slot always fall
+  // back to the wild pool in either case.
+  const sameSuitTwos = twos.filter((two) => two.suit === suit)
+  const offSuitTwos = twos.filter((two) => two.suit !== suit)
+  const wildPoolBase: CardModel[] = [...jokers, ...offSuitTwos]
+
+  const attemptWithNaturalTwo = sameSuitTwos.length > 0
+    ? attemptSequenceBuild(naturalsByOrderBase, sameSuitTwos[0], sameSuitTwos.slice(1), wildPoolBase, suit)
+    : attemptSequenceBuild(naturalsByOrderBase, null, [], wildPoolBase, suit)
+
+  let chosen = attemptWithNaturalTwo
+  if (!chosen.ok && sameSuitTwos.length > 0) {
+    // Fall back to treating every same-suit 2 as a wild instead.
+    const attemptAllWild = attemptSequenceBuild(naturalsByOrderBase, null, sameSuitTwos, wildPoolBase, suit)
+    if (attemptAllWild.ok) chosen = attemptAllWild
+  }
+
+  if (!chosen.ok) return chosen
+
+  const { slots, wildCount } = chosen
 
   const meld: Meld = {
     id: nextMeldId(),
