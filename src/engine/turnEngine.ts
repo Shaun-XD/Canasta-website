@@ -141,13 +141,11 @@ export interface TopTouchSelection {
   /** The full discard pile, oldest-first / most-recent (top) last - same shape as `GameState['discardPile'].cards`. */
   discardPile: CardModel[]
   /**
-   * Ids of the discard-pile cards the player has selected as candidates.
-   * Must form a contiguous run counting down from the top of the pile (the
-   * player can only ever "take" cards top-down, never skip into the
-   * middle), and must include the top/most-recent card's id - that is the
-   * core Top Touch rule: you cannot pick up the pile at all unless the top
-   * card specifically is part of the winning meld. Both constraints are
-   * validated here rather than trusted from the caller.
+   * Ids of the discard-pile cards the player has selected as meld candidates.
+   * Must include the top/most-recent card's id (you cannot pick up the pile
+   * unless that card is part of the unlocking meld). Other pile cards may be
+   * included individually — selection does not need to be a contiguous
+   * top-down run. Unselected pile cards still join the hand on success.
    */
   selectedDiscardIds: string[]
 }
@@ -177,8 +175,8 @@ export type MeldActionResult =
 
 /**
  * Resolves a Top Touch selection into the ordered list of discard cards it
- * refers to, enforcing that the selection is a contiguous top-down run
- * which includes the top card. Returns an error string on any violation.
+ * refers to. The top card must be included; other selected cards may be any
+ * subset of the pile (including non-contiguous). Unknown ids are rejected.
  */
 function resolveTopTouchCards(selection: TopTouchSelection): { ok: true; cards: CardModel[] } | { ok: false; error: string } {
   const { discardPile, selectedDiscardIds } = selection
@@ -193,20 +191,16 @@ function resolveTopTouchCards(selection: TopTouchSelection): { ok: true; cards: 
     return { ok: false, error: 'The top discard card must be included in the meld.' }
   }
 
-  // Walk down from the top counting how many consecutive cards are selected;
-  // that run must account for the entire selection (no gaps, no cards
-  // selected from further down without everything above them also selected).
-  let runLength = 0
   const selectedSet = new Set(selectedDiscardIds)
-  for (let i = discardPile.length - 1; i >= 0; i -= 1) {
-    if (!selectedSet.has(discardPile[i].id)) break
-    runLength += 1
+  if (selectedSet.size !== selectedDiscardIds.length) {
+    return { ok: false, error: 'Discard selection contains duplicate cards.' }
   }
-  if (runLength !== selectedDiscardIds.length) {
-    return { ok: false, error: 'Discard selection must be a contiguous run starting from the top of the pile.' }
+  const cards = discardPile.filter((c) => selectedSet.has(c.id))
+  if (cards.length !== selectedSet.size) {
+    return { ok: false, error: 'Selected discard cards are not all in the pile.' }
   }
 
-  return { ok: true, cards: discardPile.slice(discardPile.length - runLength) }
+  return { ok: true, cards }
 }
 
 /**

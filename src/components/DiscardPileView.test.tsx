@@ -23,7 +23,7 @@ describe('DiscardPileView - Top Touch selection clicks', () => {
       <DiscardPileView
         cards={cards}
         topTouchInProgress
-        selectedDiscardCount={1}
+        selectedDiscardIds={[cards[2].id]}
         onToggleDiscardCard={onToggleDiscardCard}
       />,
     )
@@ -31,16 +31,16 @@ describe('DiscardPileView - Top Touch selection clicks', () => {
     const cardButtons = container.querySelectorAll('[role="button"]')
     expect(cardButtons.length).toBe(3)
 
-    fireEvent.click(cardButtons[1])
-    expect(onToggleDiscardCard).toHaveBeenCalledWith(cards[1].id)
+    fireEvent.click(cardButtons[0])
+    expect(onToggleDiscardCard).toHaveBeenCalledWith(cards[0].id)
 
-    // Simulate the store applying the resulting selection change - the rest
-    // of the pile must still be there, not collapsed to a near-empty state.
+    // Simulate the store applying an independent multi-select (top + bottom,
+    // skipping the middle) — the rest of the pile must still be there.
     rerender(
       <DiscardPileView
         cards={cards}
         topTouchInProgress
-        selectedDiscardCount={2}
+        selectedDiscardIds={[cards[0].id, cards[2].id]}
         onToggleDiscardCard={onToggleDiscardCard}
       />,
     )
@@ -56,7 +56,7 @@ describe('DiscardPileView - Top Touch selection clicks', () => {
       <DiscardPileView
         cards={cards}
         topTouchInProgress
-        selectedDiscardCount={1}
+        selectedDiscardIds={[cards[2].id]}
         onToggleDiscardCard={onToggleDiscardCard}
       />,
     )
@@ -79,7 +79,7 @@ describe('DiscardPileView - Top Touch selection clicks', () => {
       <DiscardPileView
         cards={cards}
         topTouchInProgress
-        selectedDiscardCount={1}
+        selectedDiscardIds={[cards[2].id]}
         onToggleDiscardCard={onToggleDiscardCard}
       />,
     )
@@ -112,8 +112,18 @@ describe('DiscardPileView - Top Touch selection clicks', () => {
 
     // Inner AnimatedCard visual wrapper receives the group-hover lift classes.
     const html = container.innerHTML
-    expect(html).toMatch(/group-hover:scale-\[1\.18\]/)
+    expect(html).toMatch(/group-hover:scale-\[1\.12\]/)
     expect(html).toMatch(/group-hover:-translate-y-2/)
     void outer
+  })
+
+  it('reserves top padding so selection/hover lift is not clipped by overflow-x-auto', () => {
+    const cards = [c('6', 'spades'), c('6', 'clubs')]
+    const { container } = render(
+      <DiscardPileView cards={cards} topTouchInProgress selectedDiscardIds={[cards[1].id]} />,
+    )
+    const row = container.firstElementChild as HTMLElement
+    expect(row.className).toMatch(/pt-14/)
+    expect(row.className).not.toMatch(/overflow-y-hidden/)
   })
 })

@@ -27,24 +27,20 @@ const CLICK_DRAG_THRESHOLD_PX = 6
  * Earlier cards fan out behind/underneath it in play order.
  *
  * Once a Top Touch is in progress, any card in the pile becomes clickable:
- * clicking one toggles the contiguous top-down run of candidate cards to
- * end at (include) or just above (exclude) that card - since cards can only
- * ever be taken off the pile from the top down, the selection can never
- * skip into the middle. Selected cards get the same lifted/ringed treatment
- * used for selected hand cards (see `AnimatedCard`'s `selected` prop).
+ * clicking toggles that card alone in/out of the meld candidate set (the
+ * top/most-recent card is always included and cannot be deselected).
+ * Selected cards get the same ring treatment used for selected hand cards.
  *
  * Hovering a card gives it a gentle in-place "lift" (slight scale + upward
- * translate + shadow) - the same lightweight treatment as hovering a card in
- * the player's own hand (see `Card.tsx`'s `hover:-translate-y-1`) - rather
- * than a large detached floating preview. Nothing slides in from off-screen
- * and neighboring cards are never obscured by a separate layer.
+ * translate + shadow) on an inner visual wrapper so FLIP measurement stays
+ * stable.
  */
 export function DiscardPileView({
   cards,
   onTopCardClick,
   topCardInteractive = false,
   topTouchInProgress = false,
-  selectedDiscardCount = 0,
+  selectedDiscardIds = [],
   onToggleDiscardCard,
 }: {
   cards: CardModel[]
@@ -52,14 +48,15 @@ export function DiscardPileView({
   onTopCardClick?: () => void
   /** Whether the top card is currently clickable (i.e. it's the local player's draw phase). */
   topCardInteractive?: boolean
-  /** True while a Top Touch selection is in progress - makes every pile card clickable to extend/shrink the selection. */
+  /** True while a Top Touch selection is in progress - makes every pile card clickable to toggle selection. */
   topTouchInProgress?: boolean
-  /** How many cards counting down from the top of the pile are currently selected as meld candidates. */
-  selectedDiscardCount?: number
+  /** Ids of discard cards currently selected as meld candidates. */
+  selectedDiscardIds?: string[]
   /** Fires with a card's id when it's clicked during an in-progress Top Touch. */
   onToggleDiscardCard?: (cardId: string) => void
 }) {
   const overlapPx = DISCARD_CARD_WIDTH * OVERLAP_RATIO
+  const selectedSet = new Set(selectedDiscardIds)
 
   // Tracks the pointer's down position and whether it has since travelled
   // past the drag threshold, at the row level rather than per-card - a
@@ -103,8 +100,12 @@ export function DiscardPileView({
   const topIndex = cards.length - 1
 
   return (
+    // Generous vertical padding keeps the PICK-UP badge, selection ring, and
+    // hover lift inside the scrollport so overflow-x-auto does not clip the
+    // top edge of the cards (overflow-y becomes auto whenever overflow-x is
+    // not visible).
     <div
-      className="flex max-w-full items-end overflow-x-auto overflow-y-hidden px-3 pb-1 pt-6 scrollbar-thin"
+      className="flex max-w-full items-end overflow-x-auto px-3 pb-3 pt-14 scrollbar-thin"
       onPointerDown={handleRowPointerDown}
       onPointerMove={handleRowPointerMove}
       onPointerUp={handleRowPointerEnd}
@@ -112,8 +113,7 @@ export function DiscardPileView({
     >
       {cards.map((card, i) => {
         const isMostRecent = i === topIndex
-        const distanceFromTop = topIndex - i
-        const isSelected = topTouchInProgress && distanceFromTop < selectedDiscardCount
+        const isSelected = topTouchInProgress && selectedSet.has(card.id)
         const clickableToBegin = isMostRecent && topCardInteractive && !!onTopCardClick
         const clickableToToggle = topTouchInProgress && !!onToggleDiscardCard
         const clickable = clickableToBegin || clickableToToggle
@@ -146,9 +146,11 @@ export function DiscardPileView({
             role={clickable ? 'button' : undefined}
             title={
               clickableToToggle
-                ? isSelected
-                  ? 'Tap to remove this card (and any below it) from the Top Touch selection'
-                  : 'Tap to add this card to the Top Touch selection'
+                ? isMostRecent
+                  ? 'Top card is required for Top Touch'
+                  : isSelected
+                    ? 'Tap to remove this card from the Top Touch selection'
+                    : 'Tap to add this card to the Top Touch selection'
                 : clickableToBegin
                   ? 'Tap to Top Touch this card'
                   : undefined
@@ -160,10 +162,16 @@ export function DiscardPileView({
               suit={card.suit}
               width={DISCARD_CARD_WIDTH}
               selected={isSelected}
-              wrapperClassName="origin-bottom transition-transform duration-150 ease-out group-hover:-translate-y-2 group-hover:scale-[1.18] group-hover:drop-shadow-xl"
+              liftOnSelect={false}
+              // Selection/hover lift lives on this inner wrapper (with room in
+              // pt-14) so Card's default -translate-y-3 does not clip the top
+              // edge under overflow-x-auto.
+              wrapperClassName={`origin-bottom transition-transform duration-150 ease-out group-hover:-translate-y-2 group-hover:scale-[1.12] group-hover:drop-shadow-xl ${
+                isSelected ? '-translate-y-2' : ''
+              }`}
             />
             {isMostRecent && (
-              <span className="pointer-events-none absolute -top-5 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-400 px-1.5 py-0.5 text-[8px] font-bold leading-none text-amber-950 shadow ring-1 ring-amber-200">
+              <span className="pointer-events-none absolute -top-6 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-400 px-1.5 py-0.5 text-[8px] font-bold leading-none text-amber-950 shadow ring-1 ring-amber-200">
                 PICK-UP
               </span>
             )}

@@ -240,14 +240,29 @@ describe('buildSequence', () => {
       }
     })
 
-    it('extends the low end with the wild when the high end is capped at K (Q,K + Joker -> J,Q,K)', () => {
+    it('extends upward to Ace when the high end is open (Q,K + Joker -> Q,K,A)', () => {
       const result = buildSequence([c('Q', 'hearts'), c('K', 'hearts'), joker()], 'team-a')
       expect(result.ok).toBe(true)
       if (result.ok) {
-        expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['J', 'Q', 'K'])
+        expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['Q', 'K', 'A'])
         const wildSlot = result.meld.slots.find((s) => s.isWildFill)
-        expect(wildSlot?.slotRank).toBe('J')
+        expect(wildSlot?.slotRank).toBe('A')
       }
+    })
+
+    it('accepts a natural Q-K-A sequence (Ace high)', () => {
+      const result = buildSequence([c('Q', 'spades'), c('K', 'spades'), c('A', 'spades')], 'team-a')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['Q', 'K', 'A'])
+        expect(result.meld.wildCount).toBe(0)
+      }
+    })
+
+    it('still rejects wrapping K-A-3 (Ace cannot sit between King and a low rank)', () => {
+      // K+A+2 same-suit can legally read as Q(wild)-K-A; K-A-3 cannot wrap.
+      const result = buildSequence([c('K', 'spades'), c('A', 'spades'), c('3', 'spades')], 'team-a')
+      expect(result.ok).toBe(false)
     })
 
     it('the Joker is exempt from the single-suit check (does not cause a false "must be a single suit" rejection)', () => {

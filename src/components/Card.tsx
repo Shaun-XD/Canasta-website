@@ -16,6 +16,11 @@ export interface CardProps {
   suit?: Suit | null
   faceDown?: boolean
   selected?: boolean
+  /**
+   * When selected, lift the card with `-translate-y-3`. Set false when a
+   * parent already applies selection lift (e.g. discard pile padding/clip).
+   */
+  liftOnSelect?: boolean
   className?: string
   width?: number
   onClick?: () => void
@@ -187,6 +192,7 @@ export const Card = memo(function Card({
   suit = null,
   faceDown = false,
   selected = false,
+  liftOnSelect = true,
   className = '',
   width = 64,
   onClick,
@@ -200,7 +206,7 @@ export const Card = memo(function Card({
       style={{ width, height }}
       className={`relative shrink-0 rounded-[8px] shadow-md transition-transform duration-150 ease-out ${
         onClick ? 'cursor-pointer hover:-translate-y-1' : 'cursor-default'
-      } ${selected ? '-translate-y-3 ring-2 ring-yellow-300' : ''} ${className}`}
+      } ${selected ? `ring-2 ring-yellow-300 ${liftOnSelect ? '-translate-y-3' : ''}` : ''} ${className}`}
     >
       {faceDown || !rank ? <CardBackFace /> : <CardFace rank={rank} suit={suit} />}
     </button>

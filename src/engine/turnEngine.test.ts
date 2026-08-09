@@ -278,21 +278,27 @@ describe('attemptMeldAction (the unified "Meld" action - items 3, 5 & 8)', () =>
     expect(result.ok).toBe(false)
   })
 
-  it('rejects a non-contiguous Top Touch discard selection (skipping over a middle card)', () => {
+  it('allows a non-contiguous Top Touch discard selection (e.g. two 6s with a gap) when the top card is included', () => {
     const team = makeTeam('team-a')
-    const discardPile = [c('K', 'diamonds'), c('9', 'hearts'), c('5', 'diamonds'), c('5', 'clubs')]
-    const hand = [c('5', 'diamonds')]
+    // Pile oldest→newest: 6♠, 9♥, 6♣ (top). Player wants both 6s + joker,
+    // skipping the 9 in between.
+    const discardPile = [c('6', 'spades'), c('9', 'hearts'), c('6', 'clubs')]
+    const hand = [joker()]
 
     const result = attemptMeldAction({
       hand,
       team,
       selectedHandCardIds: [hand[0].id],
       targetMeldId: null,
-      // Includes the top card and the K, but skips the 9 in between -
-      // not a valid contiguous top-down run.
-      topTouch: { discardPile, selectedDiscardIds: [discardPile[0].id, discardPile[3].id] },
+      topTouch: { discardPile, selectedDiscardIds: [discardPile[0].id, discardPile[2].id] },
     })
-    expect(result.ok).toBe(false)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.kind).toBe('new-meld')
+      expect(result.meld.type).toBe('set')
+      expect(result.meld.rank).toBe('6')
+      expect(result.usedDiscardCards.map((card) => card.id)).toEqual([discardPile[0].id, discardPile[2].id])
+    }
   })
 
   it('performs a wild-swap via the Slide mechanic when appending a natural card that matches a wild-filled slot', () => {

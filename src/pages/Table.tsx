@@ -6,6 +6,7 @@ import { MiniCardStack } from '../components/MiniCardStack'
 import { Card } from '../components/Card'
 import { AnimatedCard } from '../components/AnimatedCard'
 import { DiscardPileView, DISCARD_CARD_WIDTH } from '../components/DiscardPileView'
+import { PozzettoStacks } from '../components/PozzettoStacks'
 import { TurnBanner } from '../components/TurnBanner'
 import { TurnTimerBadge } from '../components/TurnTimerBadge'
 import { MeldArea } from '../components/MeldArea'
@@ -14,7 +15,7 @@ import { useCountdown } from '../hooks/useCountdown'
 import { seedFlipOrigin } from '../hooks/useCardFlip'
 import { useHandReorder } from '../hooks/useHandReorder'
 import { evaluateShowEligibility, unmetShowConditions } from '../engine/showEligibility'
-import type { Player } from '../types/game'
+import type { Player, Team } from '../types/game'
 
 export function Table() {
   const { roomId } = useParams()
@@ -24,7 +25,7 @@ export function Table() {
   const selectedCardIds = useGameStore((s) => s.selectedCardIds)
   const selectedMeldId = useGameStore((s) => s.selectedMeldId)
   const topTouchInProgress = useGameStore((s) => s.topTouchInProgress)
-  const selectedDiscardCount = useGameStore((s) => s.selectedDiscardCount)
+  const selectedDiscardIds = useGameStore((s) => s.selectedDiscardIds)
   const lastActionError = useGameStore((s) => s.lastActionError)
   const {
     toggleSelectCard,
@@ -41,8 +42,9 @@ export function Table() {
     forceSuddenDeathEndRound,
     autoEndTurn,
     togglePauseTimer,
-    nextRound,
+    startNewGame,
     returnToLobby,
+    exitToHome,
   } = useGameStore((s) => s.actions)
 
   // Item 3: the stock pile is rendered as one generic face-down card (not a
@@ -192,8 +194,10 @@ export function Table() {
     <div className="felt-bg relative flex min-h-screen flex-col text-white">
       <header className="flex items-center justify-between px-4 py-2 text-xs text-white/50">
         <span>Room {room.roomId}</span>
-        <div className="flex items-center gap-3">
-          <span>Round {game.round} · Target {room.matchTargetScore} · Turn timer {room.turnTimerSeconds}s</span>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <span className="hidden sm:inline">
+            Round {game.round} · Target {room.matchTargetScore} · Turn timer {room.turnTimerSeconds}s
+          </span>
           <button
             type="button"
             onClick={togglePauseTimer}
@@ -205,6 +209,14 @@ export function Table() {
             title={isPaused ? 'Resume the turn timer for everyone' : 'Pause the turn timer for everyone'}
           >
             {isPaused ? '▶ Resume' : '⏸ Pause'}
+          </button>
+          <button
+            type="button"
+            onClick={exitToHome}
+            className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/80 transition hover:bg-red-500/30 hover:text-white"
+            title="Exit to home — ends the game and clears session state"
+          >
+            Exit
           </button>
         </div>
       </header>
@@ -248,13 +260,12 @@ export function Table() {
           </div>
         </div>
 
-        {/* Expanded meld zones for both teams (item 6) */}
+          {/* Expanded meld zones for both teams (item 6) */}
         <div className="grid min-h-0 grid-cols-1 gap-3 sm:grid-cols-2">
           {room.teams.map((team) => (
             <div key={team.id} className="flex min-h-0 flex-col gap-1">
               <div className="flex items-center justify-between px-1">
                 <span className="text-xs font-semibold text-white/60">{team.name}</span>
-                <PozzettoBadge team={team} />
               </div>
               <MeldArea
                 team={team}
@@ -269,8 +280,8 @@ export function Table() {
           ))}
         </div>
 
-        {/* Turn banner + stock/discard + Top Touch controls */}
-        <div className="flex flex-col items-center gap-3">
+        {/* Turn banner + pozzettos + stock/discard + Top Touch controls */}
+        <div className="relative flex flex-col items-center gap-3">
           <TurnBanner
             playerName={activePlayer?.name ?? ''}
             phase={game.turn.phase}
@@ -305,7 +316,7 @@ export function Table() {
                 topCardInteractive={isDrawPhase && !topTouchInProgress}
                 onTopCardClick={handleBeginTopTouch}
                 topTouchInProgress={topTouchInProgress}
-                selectedDiscardCount={selectedDiscardCount}
+                selectedDiscardIds={selectedDiscardIds}
                 onToggleDiscardCard={toggleDiscardPileCard}
               />
               <span className="text-[11px] text-white/50">Discard ({game.discardPile.cards.length})</span>
@@ -313,21 +324,18 @@ export function Table() {
           </div>
 
           {/* Item 5: two-phase Top Touch. Tapping the top discard card
-              (above) proposes it; the player then picks hand cards, and/or
-              additional discard cards below the top one (see item 1: only a
-              contiguous top-down run can be selected, since you can only
-              take from the top of the pile), and/or a meld group, then
-              confirms with the same unified Meld button below. Only on
-              success does the rest of the pile join the hand - nothing is
-              granted just for entering this mode. */}
+              proposes it; the player then picks hand cards and/or any other
+              individual discard cards to include in the unlocking meld,
+              and/or a meld group, then confirms with Meld. Only on success
+              does the rest of the pile join the hand. */}
           {isDrawPhase && !topTouchInProgress && topDiscard && (
             <p className="text-center text-[11px] text-white/40">Tap the top discard card to Top Touch it.</p>
           )}
           {topTouchInProgress && (
             <div className="flex flex-col items-center gap-1 rounded-lg bg-amber-400/10 px-3 py-2 ring-1 ring-amber-300/30">
               <p className="text-center text-xs font-medium text-amber-200">
-                Top Touch in progress — select hand cards, more discard cards below the top one, and/or a meld group
-                above, then Meld.
+                Top Touch in progress — select hand cards, tap any discard cards to include in the meld, and/or a meld
+                group above, then Meld. (Top card stays selected.)
               </p>
               <button
                 type="button"
@@ -366,7 +374,6 @@ export function Table() {
             {isLocalTurn && remainingSeconds != null && (
               <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
             )}
-            <PozzettoBadge team={localTeam} />
           </div>
 
           <div key={feedback?.token ?? 'stable'} className="flex flex-col items-center gap-1">
@@ -416,7 +423,10 @@ export function Table() {
               (item 5). `shrink-0` on each card is required - without it
               flex-shrink + negative margins collapses the whole hand into
               a single stacked pile. */}
-          <div className="flex w-full max-w-full items-end justify-center overflow-x-auto overflow-y-visible px-4 pb-2 pt-8 scrollbar-thin">
+          <div
+            className="flex w-full max-w-full items-end justify-center overflow-x-auto overflow-y-visible px-4 pb-2 pt-8 scrollbar-thin"
+            data-flip-anchor={localPlayerId ? `hand-${localPlayerId}` : undefined}
+          >
             {orderedLocalHand.map((card, i) => (
               <div
                 key={card.id}
@@ -467,13 +477,30 @@ export function Table() {
         </div>
       )}
 
+      <div className="pointer-events-none absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2">
+        <div className="pointer-events-auto rounded-xl bg-black/35 px-3 py-2 ring-1 ring-white/10">
+          <p className="mb-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-white/40">
+            Pozzetto
+          </p>
+          <PozzettoStacks
+            teams={room.teams}
+            localTeamId={localTeam?.id}
+            stackCounts={{
+              'team-a': game.pozzettoStacks['team-a']?.length ?? 0,
+              'team-b': game.pozzettoStacks['team-b']?.length ?? 0,
+            }}
+          />
+        </div>
+        <PozzettoActiveStatus teams={room.teams} localTeamId={localTeam?.id} />
+      </div>
+
       {room.status === 'round-end' && (
         <RoundEndModal
           teams={room.teams}
           scores={game.lastRoundScores}
           matchTargetScore={room.matchTargetScore}
           gameOverTeamId={game.gameOverTeamId}
-          onNextRound={nextRound}
+          onNewGame={startNewGame}
           onReturnToLobby={returnToLobby}
         />
       )}
@@ -483,15 +510,33 @@ export function Table() {
   )
 }
 
-function PozzettoBadge({ team }: { team?: { name: string; pozzetto: { claimed: boolean; activated: boolean } } }) {
-  if (!team) return null
-  const label = team.pozzetto.activated ? 'Pozzetto activated' : team.pozzetto.claimed ? 'Pozzetto claimed' : 'Pozzetto in reserve'
-  const color = team.pozzetto.activated
-    ? 'bg-emerald-400/20 text-emerald-200'
-    : team.pozzetto.claimed
-      ? 'bg-amber-400/20 text-amber-200'
-      : 'bg-white/10 text-white/50'
-  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${color}`}>{label}</span>
+/** Bottom-right status once a team has picked up their Pozzetto. */
+function PozzettoActiveStatus({
+  teams,
+  localTeamId,
+}: {
+  teams: Team[]
+  localTeamId: Team['id'] | undefined
+}) {
+  const lines = teams
+    .filter((t) => t.pozzetto.claimed)
+    .map((t) => ({
+      id: t.id,
+      text: t.id === localTeamId ? 'Pozzetto is active for us' : 'Pozzetto is active for them',
+    }))
+  if (lines.length === 0) return null
+  return (
+    <div className="flex max-w-[220px] flex-col items-end gap-1">
+      {lines.map((line) => (
+        <p
+          key={line.id}
+          className="rounded-md bg-black/45 px-2.5 py-1 text-right text-[11px] font-medium text-amber-100 ring-1 ring-amber-300/25"
+        >
+          {line.text}
+        </p>
+      ))}
+    </div>
+  )
 }
 
 function OpponentBadge({

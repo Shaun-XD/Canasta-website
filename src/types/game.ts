@@ -142,7 +142,9 @@ export interface PozzettoState {
   claimedByPlayerId: PlayerId | null
   /**
    * True once the team has discarded at least 1 card from the
-   * reserve-augmented hand, or the team has called Show.
+   * reserve-augmented hand. Together with `claimed`, this means the
+   * Pozzetto is "finished"/activated for Show eligibility; the declaring
+   * player must still empty their hand to complete Show.
    */
   activated: boolean
 }

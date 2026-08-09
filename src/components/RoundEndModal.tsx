@@ -18,14 +18,16 @@ export function RoundEndModal({
   scores,
   matchTargetScore,
   gameOverTeamId,
-  onNextRound,
+  onNewGame,
   onReturnToLobby,
 }: {
   teams: Team[]
   scores: RoundScoreResult | null
   matchTargetScore: number
   gameOverTeamId: string | null
-  onNextRound: () => void
+  /** Full match reset: new deal, scores cleared, stay at the table. */
+  onNewGame: () => void
+  /** Leave the table and return the room to lobby. */
   onReturnToLobby: () => void
 }) {
   return (
@@ -86,10 +88,10 @@ export function RoundEndModal({
           </button>
           <button
             type="button"
-            onClick={onNextRound}
+            onClick={onNewGame}
             className="flex-1 rounded-lg bg-yellow-400 px-4 py-2 font-semibold text-emerald-950 transition hover:bg-yellow-300"
           >
-            {gameOverTeamId ? 'Back to Lobby' : 'Next Round'}
+            New Game
           </button>
         </div>
       </div>

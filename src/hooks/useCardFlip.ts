@@ -18,12 +18,23 @@ interface FlipPosition {
  */
 const lastKnownRect = new Map<string, FlipPosition>()
 
-// Distinctly visible motion: long enough to read as real travel from
-// stock/discard to hand, short enough to not feel sluggish. Also used as
-// the per-action pacing delay for mock/bot turns so their flights can
-// finish before the next action starts.
+// Distinctly visible motion for human plays: long enough to read as real
+// travel, short enough to stay snappy.
 export const FLIP_DURATION_MS = 380
+/** Slower flights for bot/mock plays so the user can see what was moved. */
+export const BOT_FLIP_DURATION_MS = 900
 const FLIP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)' // ease-out
+
+/** Card ids whose next FLIP flight should use {@link BOT_FLIP_DURATION_MS}. */
+const pendingBotFlipIds = new Set<string>()
+
+function consumeFlipDuration(id?: string): number {
+  if (id && pendingBotFlipIds.has(id)) {
+    pendingBotFlipIds.delete(id)
+    return BOT_FLIP_DURATION_MS
+  }
+  return FLIP_DURATION_MS
+}
 
 // Every container a card can fly into/out of (the hand row, the meld
 // fans, the discard fan) scrolls or clips overflow for layout reasons (see
@@ -50,7 +61,13 @@ const GHOST_Z_INDEX = 2147483000
  * render of that id (now inside the hand) picks it up as `prevRect` and
  * flies from the stock position into its landing slot.
  */
-export function seedFlipOrigin(id: string, rect: DOMRect | FlipPosition): void {
+export function seedFlipOrigin(
+  id: string,
+  rect: DOMRect | FlipPosition,
+  opts?: { slow?: boolean },
+): void {
+  if (opts?.slow) pendingBotFlipIds.add(id)
+  else pendingBotFlipIds.delete(id)
   lastKnownRect.set(id, { left: rect.left, top: rect.top })
 }
 
@@ -68,11 +85,47 @@ export function getFlipAnchorRect(anchorId: string): DOMRect | null {
 }
 
 /** Convenience: seed a card's FLIP origin from a named flip-anchor element. */
-export function seedFlipOriginFromAnchor(cardId: string, anchorId: string): boolean {
+export function seedFlipOriginFromAnchor(
+  cardId: string,
+  anchorId: string,
+  opts?: { slow?: boolean },
+): boolean {
   const rect = getFlipAnchorRect(anchorId)
   if (!rect) return false
-  seedFlipOrigin(cardId, rect)
+  seedFlipOrigin(cardId, rect, opts)
   return true
+}
+
+/**
+ * Animates a Pozzetto claim: either seeds FLIP origins for cards entering the
+ * local hand, or plays staggered face-down flights into another player's
+ * hand stack. Call before React re-renders away the reserve pile.
+ */
+export function playPozzettoClaimFlights(opts: {
+  teamId: string
+  playerId: string
+  cardIds: string[]
+  toLocalHand: boolean
+  slow?: boolean
+}): void {
+  const { teamId, playerId, cardIds, toLocalHand, slow = false } = opts
+  if (cardIds.length === 0) return
+  const fromAnchor = `pozzetto-${teamId}`
+
+  if (toLocalHand) {
+    for (const id of cardIds) seedFlipOriginFromAnchor(id, fromAnchor, { slow })
+    return
+  }
+
+  const from = getFlipAnchorRect(fromAnchor)
+  const to = getFlipAnchorRect(`hand-${playerId}`)
+  if (!from || !to) return
+  const durationMs = slow ? BOT_FLIP_DURATION_MS : FLIP_DURATION_MS
+  cardIds.forEach((_, i) => {
+    window.setTimeout(() => {
+      void playDetachedCardFlight({ from, to, faceDown: true, durationMs })
+    }, i * 40)
+  })
 }
 
 /**
@@ -89,9 +142,12 @@ export function playDetachedCardFlight(opts: {
   faceDown?: boolean
   width?: number
   height?: number
+  /** Defaults to the fast human duration; bots pass {@link BOT_FLIP_DURATION_MS}. */
+  durationMs?: number
 }): Promise<void> {
   const width = opts.width ?? 72
   const height = opts.height ?? Math.round(width * 1.4)
+  const durationMs = opts.durationMs ?? FLIP_DURATION_MS
   const fromLeft = opts.from.left
   const fromTop = opts.from.top
   const toLeft = opts.to.left
@@ -133,7 +189,7 @@ export function playDetachedCardFlight(opts: {
       { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - arcLift}px)` },
       { transform: 'translate(0, 0)' },
     ],
-    { duration: FLIP_DURATION_MS, easing: FLIP_EASING, fill: 'none' },
+    { duration: durationMs, easing: FLIP_EASING, fill: 'none' },
   )
 
   return new Promise((resolve) => {
@@ -199,7 +255,10 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
       const moved = Math.abs(dx) > 1 || Math.abs(dy) > 1
 
       if (moved && typeof node.animate === 'function') {
-        playFlightGhost(node, dx, dy)
+        playFlightGhost(node, dx, dy, consumeFlipDuration(id))
+      } else {
+        // No flight — drop any pending slow flag so it can't leak to a later move.
+        pendingBotFlipIds.delete(id)
       }
     }
 
@@ -227,7 +286,7 @@ const activeFlight = new WeakMap<HTMLElement, Animation>()
  * clear visibility when the last flight ends, and cancel any prior flight
  * on the same node before starting a new one.
  */
-function playFlightGhost(node: HTMLElement, dx: number, dy: number): void {
+function playFlightGhost(node: HTMLElement, dx: number, dy: number, durationMs = FLIP_DURATION_MS): void {
   const prior = activeFlight.get(node)
   if (prior) {
     try {
@@ -267,7 +326,7 @@ function playFlightGhost(node: HTMLElement, dx: number, dy: number): void {
       { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - arcLift}px)` },
       { transform: 'translate(0, 0)' },
     ],
-    { duration: FLIP_DURATION_MS, easing: FLIP_EASING, fill: 'none' },
+    { duration: durationMs, easing: FLIP_EASING, fill: 'none' },
   )
   activeFlight.set(node, anim)
 

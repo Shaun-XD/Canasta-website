@@ -1,5 +1,12 @@
 import type { CardModel, Meld, MeldSlot, Rank, Suit, TeamId } from '../types/game'
-import { RANK_BY_ORDER, RANK_ORDER, cardPointValue } from './cardValues'
+import {
+  ACE_HIGH_ORDER,
+  ACE_LOW_ORDER,
+  RANK_BY_ORDER,
+  RANK_ORDER,
+  cardPointValue,
+  sequenceRankOrder,
+} from './cardValues'
 
 let meldIdCounter = 0
 function nextMeldId(): string {
@@ -158,8 +165,9 @@ function attemptSequenceBuild(
 
   if (missing.length === 0 && wildPool.length === 1) {
     // No internal gap: the wild must extend an open end instead. Prefer
-    // extending upward (the next-higher rank) and fall back to extending
-    // downward if the run is already capped at K (no wraparound).
+    // extending upward (the next-higher rank, including Ace-high after K)
+    // and fall back to extending downward if the run is already capped at A
+    // (no wraparound).
     if (RANK_BY_ORDER[maxNatural + 1] !== undefined) {
       wildOrder = maxNatural + 1
       maxOrder = wildOrder
@@ -177,6 +185,10 @@ function attemptSequenceBuild(
   const span = maxOrder - minOrder + 1
   if (span < 3) {
     return { ok: false, error: 'A sequence needs at least 3 consecutive ranks.' }
+  }
+  // Ace is either low (A-2-3…) or high (…Q-K-A), never both in one run.
+  if (minOrder <= ACE_LOW_ORDER && maxOrder >= ACE_HIGH_ORDER) {
+    return { ok: false, error: 'Sequences cannot wrap around Ace (no K-A-2).' }
   }
   if (RANK_BY_ORDER[minOrder] === undefined || RANK_BY_ORDER[maxOrder] === undefined) {
     return { ok: false, error: 'Invalid rank range.' }
@@ -224,44 +236,50 @@ export function buildSequence(cards: CardModel[], ownerTeamId: TeamId): MeldResu
     }
   }
 
-  // Determine which cards are "true naturals" at their own rank/suit slot.
-  // Non-2 naturals are unambiguous - build that base map first, and reject
-  // duplicate ranks immediately since no 2-placement choice can fix that.
-  const naturalsByOrderBase = new Map<number, CardModel>()
-  for (const card of others) {
-    const order = RANK_ORDER[card.rank]
-    if (naturalsByOrderBase.has(order)) {
-      return { ok: false, error: 'Duplicate rank in sequence - only one card may occupy each slot.' }
-    }
-    naturalsByOrderBase.set(order, card)
-  }
+  // Ace may be high (…Q K A) or low (A 2 3…). Try high first (default),
+  // then low, so Q-K-A and A-2-3 are both legal and K-A-2 never wraps.
+  const hasAce = others.some((c) => c.rank === 'A')
+  const aceModes: boolean[] = hasAce ? [true, false] : [true]
 
-  // A same-suit 2 is genuinely ambiguous: it can occupy its own literal '2'
-  // slot as a natural, OR it can serve double-duty as a wild filling a gap
-  // or extending an open end elsewhere in the run - whichever interpretation
-  // actually makes the selected cards legal. Off-suit 2s are unambiguous
-  // (always wild). Since only one card can ever claim the single '2' slot,
-  // there are only two interpretations worth trying: the first same-suit 2
-  // as the natural (today's default, tried first for backward
-  // compatibility) versus none of them as natural (all wild). Any
-  // additional same-suit 2s beyond the one claiming the slot always fall
-  // back to the wild pool in either case.
   const sameSuitTwos = twos.filter((two) => two.suit === suit)
   const offSuitTwos = twos.filter((two) => two.suit !== suit)
   const wildPoolBase: CardModel[] = [...jokers, ...offSuitTwos]
 
-  const attemptWithNaturalTwo = sameSuitTwos.length > 0
-    ? attemptSequenceBuild(naturalsByOrderBase, sameSuitTwos[0], sameSuitTwos.slice(1), wildPoolBase, suit)
-    : attemptSequenceBuild(naturalsByOrderBase, null, [], wildPoolBase, suit)
+  let chosen: SequenceBuildAttempt | null = null
+  for (const aceHigh of aceModes) {
+    const naturalsByOrderBase = new Map<number, CardModel>()
+    let duplicate = false
+    for (const card of others) {
+      const order = sequenceRankOrder(card.rank, aceHigh)
+      if (naturalsByOrderBase.has(order)) {
+        duplicate = true
+        break
+      }
+      naturalsByOrderBase.set(order, card)
+    }
+    if (duplicate) continue
 
-  let chosen = attemptWithNaturalTwo
-  if (!chosen.ok && sameSuitTwos.length > 0) {
-    // Fall back to treating every same-suit 2 as a wild instead.
-    const attemptAllWild = attemptSequenceBuild(naturalsByOrderBase, null, sameSuitTwos, wildPoolBase, suit)
-    if (attemptAllWild.ok) chosen = attemptAllWild
+    // A same-suit 2 is ambiguous: natural-in-slot vs wild. Prefer natural.
+    const attemptWithNaturalTwo =
+      sameSuitTwos.length > 0
+        ? attemptSequenceBuild(naturalsByOrderBase, sameSuitTwos[0], sameSuitTwos.slice(1), wildPoolBase, suit)
+        : attemptSequenceBuild(naturalsByOrderBase, null, [], wildPoolBase, suit)
+
+    let attempt = attemptWithNaturalTwo
+    if (!attempt.ok && sameSuitTwos.length > 0) {
+      const attemptAllWild = attemptSequenceBuild(naturalsByOrderBase, null, sameSuitTwos, wildPoolBase, suit)
+      if (attemptAllWild.ok) attempt = attemptAllWild
+    }
+    if (attempt.ok) {
+      chosen = attempt
+      break
+    }
+    if (!chosen) chosen = attempt
   }
 
-  if (!chosen.ok) return chosen
+  if (!chosen || !chosen.ok) {
+    return chosen ?? { ok: false, error: 'Not a legal sequence with those cards.' }
+  }
 
   const { slots, wildCount } = chosen
 
@@ -311,8 +329,20 @@ export function appendToSet(meld: Meld, card: CardModel): AppendResult {
   return { ok: true, meld: next }
 }
 
+/**
+ * Whether this sequence treats Ace as high (after King). Ace at the high end
+ * of the ordered slots ⇒ high; Ace at the low end ⇒ low (A-2-3…). Melds
+ * without an Ace default to high so K can still grow to A.
+ */
+export function meldUsesAceHigh(meld: Meld): boolean {
+  const aceIdx = meld.slots.findIndex((s) => s.slotRank === 'A')
+  if (aceIdx < 0) return true
+  return aceIdx === meld.slots.length - 1
+}
+
 function minMaxOrder(meld: Meld): { min: number; max: number } {
-  const orders = meld.slots.map((s) => RANK_ORDER[s.slotRank])
+  const aceHigh = meldUsesAceHigh(meld)
+  const orders = meld.slots.map((s) => sequenceRankOrder(s.slotRank, aceHigh))
   return { min: Math.min(...orders), max: Math.max(...orders) }
 }
 
@@ -327,10 +357,18 @@ export function canAppendToSequence(meld: Meld, card: CardModel): boolean {
   const { min, max } = minMaxOrder(meld)
 
   if (card.rank !== 'JOKER' && card.rank !== '2' && card.suit === suit) {
-    const order = RANK_ORDER[card.rank]
+    const aceHigh = meldUsesAceHigh(meld)
+    // Ace can extend a K-high run (high) or a 2-low run (low).
+    if (card.rank === 'A') {
+      if (max === RANK_ORDER.K || min === RANK_ORDER['2']) return true
+      const aceSlot = meld.slots.findIndex((s) => s.slotRank === 'A')
+      if (aceSlot >= 0 && meld.slots[aceSlot].isWildFill) return true
+      return false
+    }
+    const order = sequenceRankOrder(card.rank, aceHigh)
     if (order === max + 1 || order === min - 1) return true
     // Slide trigger: natural card matches a rank currently filled by a wild.
-    const slotIndex = meld.slots.findIndex((s) => RANK_ORDER[s.slotRank] === order)
+    const slotIndex = meld.slots.findIndex((s) => sequenceRankOrder(s.slotRank, aceHigh) === order)
     if (slotIndex >= 0 && meld.slots[slotIndex].isWildFill) return true
     return false
   }
@@ -375,8 +413,16 @@ export function appendToSequence(
 
   const isNaturalCandidate = card.suit === suit && card.rank !== 'JOKER'
   if (isNaturalCandidate) {
-    const order = RANK_ORDER[card.rank]
-    if (order === max + 1 || order === min - 1) {
+    const aceHigh = meldUsesAceHigh(meld)
+    let order: number | null = null
+    if (card.rank === 'A') {
+      if (max === RANK_ORDER.K) order = ACE_HIGH_ORDER
+      else if (min === RANK_ORDER['2']) order = ACE_LOW_ORDER
+    } else {
+      order = sequenceRankOrder(card.rank, aceHigh)
+    }
+
+    if (order !== null && (order === max + 1 || order === min - 1)) {
       const isWildFill = isWildFillForSlot(card, card.rank, suit)
       const slot: MeldSlot = { card, slotRank: card.rank, isWildFill }
       const slots = order === max + 1 ? [...meld.slots, slot] : [slot, ...meld.slots]
@@ -385,7 +431,8 @@ export function appendToSequence(
       return { ok: true, meld: next }
     }
     // Slide trigger: this natural fills a rank currently occupied by a wild.
-    const slotIndex = meld.slots.findIndex((s) => RANK_ORDER[s.slotRank] === order)
+    const slideOrder = order ?? sequenceRankOrder(card.rank, aceHigh)
+    const slotIndex = meld.slots.findIndex((s) => sequenceRankOrder(s.slotRank, aceHigh) === slideOrder)
     if (slotIndex >= 0 && meld.slots[slotIndex].isWildFill) {
       const displacedWild = meld.slots[slotIndex].card
       if (!slideEdge) {
@@ -556,15 +603,21 @@ function planSequenceWildMove(meld: Meld): SequenceWildPlacement | null {
   const remaining = meld.slots.filter((_, i) => i !== sourceIdx)
   if (remaining.length < 2) return null
 
+  // Infer Ace-high/low from the remaining run (Ace may have been the moved wild).
+  const aceHigh =
+    remaining.some((s) => s.slotRank === 'A')
+      ? remaining.findIndex((s) => s.slotRank === 'A') === remaining.length - 1
+      : meldUsesAceHigh(meld)
+
   // Remaining naturals must already form a contiguous run (no gaps).
   for (let i = 1; i < remaining.length; i += 1) {
-    const prev = RANK_ORDER[remaining[i - 1].slotRank]
-    const curr = RANK_ORDER[remaining[i].slotRank]
+    const prev = sequenceRankOrder(remaining[i - 1].slotRank, aceHigh)
+    const curr = sequenceRankOrder(remaining[i].slotRank, aceHigh)
     if (curr !== prev + 1) return null
   }
 
-  const min = RANK_ORDER[remaining[0].slotRank]
-  const max = RANK_ORDER[remaining[remaining.length - 1].slotRank]
+  const min = sequenceRankOrder(remaining[0].slotRank, aceHigh)
+  const max = sequenceRankOrder(remaining[remaining.length - 1].slotRank, aceHigh)
   const suit = meld.suit
 
   type Option = { key: string; nextLabel: string; build: () => MeldSlot[] }

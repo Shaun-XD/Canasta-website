@@ -2,14 +2,13 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { useGameStore } from './gameStore'
 import { c } from '../engine/testHelpers'
 import type { CardModel } from '../types/game'
-import { FLIP_DURATION_MS } from '../hooks/useCardFlip'
 
 /**
  * Regression coverage for the "discard pile disappears on click" bug: the
  * root cause traced back to `useCardFlip` misreading scroll-only movement
  * as a real card move (see `useCardFlip.ts`), but this store-level test
  * guards the adjacent assumption the bug report asked to double-check -
- * that `toggleDiscardPileCard` only ever tracks a selection count and never
+ * that `toggleDiscardPileCard` only ever tracks selection ids and never
  * touches the discard pile's own card array.
  */
 function startGameWithDiscardPile(discardCards: CardModel[]) {
@@ -21,10 +20,11 @@ function startGameWithDiscardPile(discardCards: CardModel[]) {
   const { game } = useGameStore.getState()
   if (!game) throw new Error('expected startGame() to produce a game')
 
+  const topId = discardCards[discardCards.length - 1].id
   useGameStore.setState({
     game: { ...game, discardPile: { cards: discardCards } },
     topTouchInProgress: true,
-    selectedDiscardCount: 1,
+    selectedDiscardIds: [topId],
   })
 }
 
@@ -37,12 +37,12 @@ describe('toggleDiscardPileCard', () => {
       selectedCardIds: [],
       selectedMeldId: null,
       topTouchInProgress: false,
-      selectedDiscardCount: 0,
+      selectedDiscardIds: [],
       lastActionError: null,
     })
   })
 
-  it('never changes the discard pile array (length, contents, or identity) - only the selection count', () => {
+  it('never changes the discard pile array (length, contents, or identity) - only the selection ids', () => {
     const discardCards = [c('3', 'hearts'), c('4', 'hearts'), c('5', 'hearts')]
     startGameWithDiscardPile(discardCards)
 
@@ -54,44 +54,303 @@ describe('toggleDiscardPileCard', () => {
     expect(state.game!.discardPile.cards).toBe(pileBefore)
     expect(state.game!.discardPile.cards.length).toBe(3)
     expect(state.game!.discardPile.cards).toEqual(discardCards)
-    expect(state.selectedDiscardCount).toBe(2)
+    expect(state.selectedDiscardIds).toEqual([discardCards[1].id, discardCards[2].id])
   })
 
-  it('extends the selection to a middle card, then shrinks it back on a second click, without ever touching the pile', () => {
-    const discardCards = [c('3', 'hearts'), c('4', 'hearts'), c('5', 'hearts')]
-    startGameWithDiscardPile(discardCards)
-
-    useGameStore.getState().actions.toggleDiscardPileCard(discardCards[1].id)
-    expect(useGameStore.getState().selectedDiscardCount).toBe(2)
-    expect(useGameStore.getState().game!.discardPile.cards.length).toBe(3)
-
-    useGameStore.getState().actions.toggleDiscardPileCard(discardCards[1].id)
-    expect(useGameStore.getState().selectedDiscardCount).toBe(1)
-    expect(useGameStore.getState().game!.discardPile.cards.length).toBe(3)
-  })
-
-  it('selecting all the way down to the bottom-most card selects the whole pile and still leaves it intact', () => {
+  it('toggles a middle card independently without forcing neighboring cards selected', () => {
     const discardCards = [c('3', 'hearts'), c('4', 'hearts'), c('5', 'hearts'), c('6', 'hearts')]
     startGameWithDiscardPile(discardCards)
 
+    // Select only the bottom-most card + top (skip the middle two).
     useGameStore.getState().actions.toggleDiscardPileCard(discardCards[0].id)
+    expect(useGameStore.getState().selectedDiscardIds).toEqual([discardCards[0].id, discardCards[3].id])
+    expect(useGameStore.getState().game!.discardPile.cards.length).toBe(4)
 
-    const state = useGameStore.getState()
-    expect(state.selectedDiscardCount).toBe(4)
-    expect(state.game!.discardPile.cards.length).toBe(4)
-    expect(state.game!.discardPile.cards).toEqual(discardCards)
+    useGameStore.getState().actions.toggleDiscardPileCard(discardCards[0].id)
+    expect(useGameStore.getState().selectedDiscardIds).toEqual([discardCards[3].id])
+    expect(useGameStore.getState().game!.discardPile.cards.length).toBe(4)
+  })
+
+  it('cannot deselect the top/most-recent discard card', () => {
+    const discardCards = [c('3', 'hearts'), c('4', 'hearts'), c('5', 'hearts')]
+    startGameWithDiscardPile(discardCards)
+    const topId = discardCards[2].id
+
+    useGameStore.getState().actions.toggleDiscardPileCard(topId)
+
+    expect(useGameStore.getState().selectedDiscardIds).toEqual([topId])
   })
 
   it('is a no-op when no Top Touch is in progress', () => {
     const discardCards = [c('3', 'hearts'), c('4', 'hearts')]
     startGameWithDiscardPile(discardCards)
-    useGameStore.setState({ topTouchInProgress: false, selectedDiscardCount: 0 })
+    useGameStore.setState({ topTouchInProgress: false, selectedDiscardIds: [] })
 
     useGameStore.getState().actions.toggleDiscardPileCard(discardCards[0].id)
 
     const state = useGameStore.getState()
-    expect(state.selectedDiscardCount).toBe(0)
+    expect(state.selectedDiscardIds).toEqual([])
     expect(state.game!.discardPile.cards.length).toBe(2)
+  })
+})
+
+describe('Show / Pozzetto activation on going out', () => {
+  beforeEach(() => {
+    useGameStore.setState({
+      room: null,
+      game: null,
+      localPlayerId: null,
+      selectedCardIds: [],
+      selectedMeldId: null,
+      topTouchInProgress: false,
+      selectedDiscardIds: [],
+      lastActionError: null,
+    })
+  })
+
+  function fakeCanasta(): import('../types/game').Meld {
+    return {
+      id: `m-${Math.random()}`,
+      type: 'set',
+      ownerTeamId: 'team-a',
+      rank: '8',
+      suit: null,
+      slots: Array.from({ length: 7 }, (_, i) => ({
+        card: c('8', i % 2 === 0 ? 'hearts' : 'spades'),
+        slotRank: '8' as const,
+        isWildFill: false,
+      })),
+      wildCount: 0,
+      canBecomeLimpa: true,
+      classification: 'mixed-canasta',
+      isCanasta: true,
+    }
+  }
+
+  it('activates Pozzetto on discard after claim, and auto-ends the round when Show conditions are met', () => {
+    const { actions } = useGameStore.getState()
+    actions.createRoom('Tester')
+    actions.toggleReady()
+    actions.startGame()
+
+    const state = useGameStore.getState()
+    const localId = state.localPlayerId!
+    const room = state.room!
+    const game = state.game!
+    const team = room.teams.find((t) => t.playerIds.includes(localId))!
+    const lastCard = c('3', 'clubs')
+
+    useGameStore.setState({
+      room: {
+        ...room,
+        teams: room.teams.map((t) =>
+          t.id === team.id
+            ? {
+                ...t,
+                melds: [fakeCanasta(), fakeCanasta(), fakeCanasta()],
+                pozzetto: { claimed: true, claimedByPlayerId: localId, activated: false },
+              }
+            : t,
+        ),
+      },
+      game: {
+        ...game,
+        hands: { ...game.hands, [localId]: [lastCard] },
+        turn: {
+          ...game.turn,
+          activePlayerId: localId,
+          phase: 'action',
+          hasDrawnThisTurn: true,
+        },
+      },
+      selectedCardIds: [lastCard.id],
+    })
+
+    useGameStore.getState().actions.discardSelected()
+
+    const after = useGameStore.getState()
+    const teamAfter = after.room!.teams.find((t) => t.id === team.id)!
+    expect(teamAfter.pozzetto.activated).toBe(true)
+    expect(after.room!.status).toBe('round-end')
+    expect(after.game!.lastRoundScores?.endingType).toBe('show')
+    expect(after.game!.lastRoundScores?.showingTeamId).toBe(team.id)
+  })
+
+  it('teammate bot claims Pozzetto when discarding their last card', async () => {
+    vi.useFakeTimers()
+    const { actions } = useGameStore.getState()
+    actions.createRoom('Tester')
+    actions.toggleReady()
+    actions.startGame()
+
+    const state = useGameStore.getState()
+    const room = state.room!
+    const game = state.game!
+    const teammate = room.players.find((p) => p.name === 'Teammate (bot)')!
+    expect(teammate.teamId).toBe('team-a')
+    const team = room.teams.find((t) => t.id === 'team-a')!
+    const lastCard = c('3', 'clubs')
+    const reserve = Array.from({ length: 11 }, (_, i) => c('4', i % 2 === 0 ? 'hearts' : 'spades'))
+
+    useGameStore.setState({
+      room: {
+        ...room,
+        teams: room.teams.map((t) =>
+          t.id === team.id
+            ? { ...t, pozzetto: { claimed: false, claimedByPlayerId: null, activated: false } }
+            : t,
+        ),
+      },
+      game: {
+        ...game,
+        discardPile: { cards: [] },
+        pozzettoStacks: { ...game.pozzettoStacks, 'team-a': reserve },
+        hands: { ...game.hands, [teammate.id]: [lastCard] },
+        turn: {
+          ...game.turn,
+          activePlayerId: teammate.id,
+          phase: 'action',
+          hasDrawnThisTurn: true,
+        },
+      },
+    })
+
+    useGameStore.getState().actions._mockAdvanceUntilLocal()
+    for (let i = 0; i < 30; i += 1) {
+      await vi.advanceTimersByTimeAsync(1400 + 20)
+      const after = useGameStore.getState()
+      const teamAfter = after.room!.teams.find((t) => t.id === 'team-a')!
+      if (teamAfter.pozzetto.claimed) break
+    }
+    vi.useRealTimers()
+
+    const after = useGameStore.getState()
+    const teamAfter = after.room!.teams.find((t) => t.id === 'team-a')!
+    expect(teamAfter.pozzetto.claimed).toBe(true)
+    expect(teamAfter.pozzetto.claimedByPlayerId).toBe(teammate.id)
+    expect(after.game!.pozzettoStacks['team-a']).toHaveLength(0)
+    // Reserve joined the teammate's hand after the final discard.
+    expect(after.game!.hands[teammate.id]).toHaveLength(11)
+  })
+
+  it('teammate bot claims Pozzetto mid-turn when melding empties their hand', async () => {
+    vi.useFakeTimers()
+    const { actions } = useGameStore.getState()
+    actions.createRoom('Tester')
+    actions.toggleReady()
+    actions.startGame()
+
+    const state = useGameStore.getState()
+    const room = state.room!
+    const game = state.game!
+    const teammate = room.players.find((p) => p.name === 'Teammate (bot)')!
+    const team = room.teams.find((t) => t.id === 'team-a')!
+    // Existing set of 8s — bot appends three more 8s and empties the hand.
+    const existing = fakeCanasta()
+    existing.slots = existing.slots.slice(0, 3)
+    existing.isCanasta = false
+    existing.classification = 'in-progress'
+    const handEights = [c('8', 'hearts'), c('8', 'spades'), c('8', 'clubs')]
+    const reserve = Array.from({ length: 11 }, (_, i) => c('5', i % 2 === 0 ? 'diamonds' : 'clubs'))
+
+    useGameStore.setState({
+      room: {
+        ...room,
+        teams: room.teams.map((t) =>
+          t.id === team.id
+            ? {
+                ...t,
+                melds: [existing],
+                pozzetto: { claimed: false, claimedByPlayerId: null, activated: false },
+              }
+            : t,
+        ),
+      },
+      game: {
+        ...game,
+        discardPile: { cards: [] },
+        pozzettoStacks: { ...game.pozzettoStacks, 'team-a': reserve },
+        hands: { ...game.hands, [teammate.id]: handEights },
+        turn: {
+          ...game.turn,
+          activePlayerId: teammate.id,
+          phase: 'action',
+          hasDrawnThisTurn: true,
+        },
+      },
+    })
+
+    useGameStore.getState().actions._mockAdvanceUntilLocal()
+    for (let i = 0; i < 40; i += 1) {
+      await vi.advanceTimersByTimeAsync(1400 + 20)
+      const after = useGameStore.getState()
+      const teamAfter = after.room!.teams.find((t) => t.id === 'team-a')!
+      if (teamAfter.pozzetto.claimed) break
+    }
+    vi.useRealTimers()
+
+    const after = useGameStore.getState()
+    const teamAfter = after.room!.teams.find((t) => t.id === 'team-a')!
+    expect(teamAfter.pozzetto.claimed).toBe(true)
+    expect(teamAfter.pozzetto.claimedByPlayerId).toBe(teammate.id)
+    expect(after.game!.pozzettoStacks['team-a']).toHaveLength(0)
+  })
+
+  it('bot discard after Pozzetto claim activates the reserve (so Show is possible)', async () => {
+    vi.useFakeTimers()
+    const { actions } = useGameStore.getState()
+    actions.createRoom('Tester')
+    actions.toggleReady()
+    actions.startGame()
+
+    const state = useGameStore.getState()
+    const localId = state.localPlayerId!
+    const room = state.room!
+    const game = state.game!
+    const botId = room.players.find((p) => p.id !== localId)!.id
+    const botTeam = room.teams.find((t) => t.playerIds.includes(botId))!
+    const discardCard = c('4', 'diamonds')
+
+    // Claimed but not activated — mirrors the stuck "Pozzetto claimed" UI state.
+    // Phase draw with empty discard so the bot must draw stock then discard.
+    useGameStore.setState({
+      room: {
+        ...room,
+        teams: room.teams.map((t) =>
+          t.id === botTeam.id
+            ? {
+                ...t,
+                melds: [fakeCanasta(), fakeCanasta(), fakeCanasta()],
+                pozzetto: { claimed: true, claimedByPlayerId: botId, activated: false },
+              }
+            : t,
+        ),
+      },
+      game: {
+        ...game,
+        discardPile: { cards: [] },
+        hands: { ...game.hands, [botId]: [discardCard, c('5', 'clubs')] },
+        turn: {
+          ...game.turn,
+          activePlayerId: botId,
+          phase: 'draw',
+          hasDrawnThisTurn: false,
+        },
+      },
+    })
+
+    useGameStore.getState().actions._mockAdvanceUntilLocal()
+    for (let i = 0; i < 20; i += 1) {
+      await vi.advanceTimersByTimeAsync(1400 + 20)
+      const after = useGameStore.getState()
+      const teamAfter = after.room!.teams.find((t) => t.id === botTeam.id)!
+      if (teamAfter.pozzetto.activated || after.room!.status === 'round-end') break
+    }
+    vi.useRealTimers()
+
+    const after = useGameStore.getState()
+    const teamAfter = after.room!.teams.find((t) => t.id === botTeam.id)!
+    expect(teamAfter.pozzetto.activated || after.room!.status === 'round-end').toBe(true)
   })
 })
 
@@ -105,7 +364,7 @@ describe('mock/bot turn pacing', () => {
       selectedCardIds: [],
       selectedMeldId: null,
       topTouchInProgress: false,
-      selectedDiscardCount: 0,
+      selectedDiscardIds: [],
       lastActionError: null,
     })
   })
@@ -150,26 +409,21 @@ describe('mock/bot turn pacing', () => {
     // Immediately after kickoff (before any await timers), the draw step may
     // already have applied synchronously up to the first sleep - advance
     // just past one action duration and confirm the bot has drawn.
-    await vi.advanceTimersByTimeAsync(FLIP_DURATION_MS + 20)
+    await vi.advanceTimersByTimeAsync(1400 + 20) // BOT_ACTION_MS
 
     const afterDraw = useGameStore.getState()
-    // Either still on this mock (mid-turn after draw/melds) or already
-    // advanced; the stock should have shrunk by the draw if stock was non-empty.
-    if (stockBefore > 0) {
-      expect(afterDraw.game!.stock.length).toBeLessThan(stockBefore)
-      // Hand grew by the draw unless a meld already consumed cards - at
-      // minimum the bot should no longer be sitting on the pre-draw hand
-      // with an untouched stock.
-      expect(
-        afterDraw.game!.hands[mockId].length !== mockHandBefore ||
-          afterDraw.game!.turn.activePlayerId !== mockId,
-      ).toBe(true)
-    }
+    // Either stock draw or Top Touch counts as the bot's draw step.
+    const stockShrunk = afterDraw.game!.stock.length < stockBefore
+    const discardShrunk =
+      afterDraw.game!.discardPile.cards.length < started.game!.discardPile.cards.length
+    const turnedOver = afterDraw.game!.turn.activePlayerId !== mockId
+    const handChanged = afterDraw.game!.hands[mockId].length !== mockHandBefore
+    expect(stockShrunk || discardShrunk || turnedOver || handChanged).toBe(true)
 
     // Drain the rest of the turn (melds/appends/discard + 500ms gap) and any
     // subsequent mock turns until it loops back (cap so we don't spin forever).
-    for (let i = 0; i < 40; i += 1) {
-      await vi.advanceTimersByTimeAsync(FLIP_DURATION_MS + 500)
+    for (let i = 0; i < 60; i += 1) {
+      await vi.advanceTimersByTimeAsync(1400 + 600)
       if (useGameStore.getState().game?.turn.activePlayerId === localId) break
     }
 

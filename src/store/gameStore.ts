@@ -24,16 +24,22 @@ import {
 import { moveWildInMeld as moveWildInMeldEngine } from '../engine/meldValidation'
 import { planAiAppends, planAiDraw, planAiMelds, pickAiDiscard } from '../engine/aiPlayer'
 import {
-  FLIP_DURATION_MS,
+  BOT_FLIP_DURATION_MS,
   getFlipAnchorRect,
   playDetachedCardFlight,
+  playPozzettoClaimFlights,
   seedFlipOriginFromAnchor,
 } from '../hooks/useCardFlip'
 
-/** Per-action pacing for mock/bot turns — matches the human card-flight duration. */
-const BOT_ACTION_MS = FLIP_DURATION_MS
+/** Per-action pacing for mock/bot turns — longer than the slow bot flight. */
+const BOT_ACTION_MS = 1400
 /** Extra pause after a bot finishes its turn, before the next bot (or human) acts. */
-const BOT_BETWEEN_TURNS_MS = 500
+const BOT_BETWEEN_TURNS_MS = 600
+
+const botFlip = { slow: true } as const
+function botDetachedFlight(opts: Parameters<typeof playDetachedCardFlight>[0]) {
+  return playDetachedCardFlight({ ...opts, durationMs: BOT_FLIP_DURATION_MS })
+}
 
 /** Bumped whenever a new game/round starts so in-flight bot timeouts abort cleanly. */
 let botTurnGeneration = 0
@@ -75,7 +81,16 @@ async function sleepRespectingPause(ms: number, isCancelled: () => boolean): Pro
 
 const HAND_SIZE = 13 // section 1: deal 13 cards to each player's hand
 const POZZETTO_SIZE = 11 // section 1: two 11-card reserve stacks, one per team
-const MOCK_PLAYER_NAMES = ['Player 2 (mock)', 'Player 3 (mock)', 'Player 4 (mock)']
+/**
+ * Clockwise seats after the local player (seat 0, team-a):
+ *   1 = left-hand opponent, 2 = partner (opposite), 3 = right-hand opponent.
+ * Turn order is therefore: Me → Opponent → Teammate → Opponent #2.
+ */
+const MOCK_SEATS: { name: string; teamId: TeamId }[] = [
+  { name: 'Opponent (bot)', teamId: 'team-b' },
+  { name: 'Teammate (bot)', teamId: 'team-a' },
+  { name: 'Opponent #2 (bot)', teamId: 'team-b' },
+]
 
 function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
@@ -90,13 +105,11 @@ function makeRoomCode(): string {
 
 const AVATAR_COLORS = ['#ef4444', '#3b82f6', '#eab308', '#22c55e', '#a855f7', '#ec4899']
 
-const MOCK_TEAM_IDS: TeamId[] = ['team-a', 'team-b', 'team-b']
-
 function makeMockPlayers(): Player[] {
-  return MOCK_PLAYER_NAMES.map((name, i) => ({
+  return MOCK_SEATS.map((seat, i) => ({
     id: randomId('mock'),
-    name,
-    teamId: MOCK_TEAM_IDS[i],
+    name: seat.name,
+    teamId: seat.teamId,
     seat: i + 1,
     isReady: true,
     isLocal: false,
@@ -134,12 +147,11 @@ interface GameStoreState {
    */
   topTouchInProgress: boolean
   /**
-   * While `topTouchInProgress`, how many cards counting down from the top of
-   * the discard pile are currently included as meld candidates (always >= 1
-   * - the top card itself is mandatory and can never be excluded). 0 when no
-   * Top Touch is in progress.
+   * While `topTouchInProgress`, ids of discard-pile cards included as meld
+   * candidates. Always includes the top card (mandatory); other pile cards
+   * can be toggled individually. Empty when no Top Touch is in progress.
    */
-  selectedDiscardCount: number
+  selectedDiscardIds: string[]
   lastActionError: string | null
   actions: {
     createRoom: (playerName: string, targetScore?: number, turnTimerSeconds?: number) => string
@@ -159,18 +171,16 @@ interface GameStoreState {
     /** Backs out of Top Touch mode without taking anything from the discard pile. */
     cancelTopTouch: () => void
     /**
-     * While a Top Touch is in progress, toggles whether the discard pile
-     * card `cardId` (and everything above it, i.e. closer to the top) is
-     * included in the candidate set. Since cards can only be taken off the
-     * pile top-down, this always resolves to a contiguous run counting down
-     * from the top - the top card itself can never be excluded.
+     * While a Top Touch is in progress, toggles whether discard pile card
+     * `cardId` is included in the meld candidate set. The top card itself
+     * can never be excluded; other cards toggle independently.
      */
     toggleDiscardPileCard: (cardId: string) => void
     /**
      * The single unified meld action (item 3) behind the "Meld" button.
      * Uses the current hand-card selection + targeted meld group (and, if
-     * `topTouchInProgress`, the top discard card) to either append to the
-     * targeted meld or auto-detect + create a brand-new Set/Sequence.
+     * `topTouchInProgress`, the selected discard cards) to either append to
+     * the targeted meld or auto-detect + create a brand-new Set/Sequence.
      */
     attemptMeld: () => void
     /** Item 7: toggles a Set's single edge-positioned wild card between front/back. */
@@ -183,8 +193,18 @@ interface GameStoreState {
     autoEndTurn: () => void
     /** Pauses (freezing, not resetting) or resumes the active turn timer for everyone at the table. */
     togglePauseTimer: () => void
-    nextRound: () => void
+    /**
+     * Starts a brand-new match at the table: scores → 0, melds cleared,
+     * fresh deal, round 1. Stays on the game screen (does not return to lobby).
+     */
+    startNewGame: () => void
+    /** Leaves the table and returns the room to lobby status (game state cleared). */
     returnToLobby: () => void
+    /**
+     * Full exit: wipes room + game + local session from memory (no persisted
+     * cache) and leaves the caller to navigate home.
+     */
+    exitToHome: () => void
     /** @internal mock-only helper, not meant to be called by UI code directly */
     _mockAdvanceUntilLocal: () => void
   }
@@ -260,6 +280,7 @@ function tryClaimPozzetto(
   hand: CardModel[],
   trigger: 'discard' | 'meld-empty',
   handSizeBeforeAction: number,
+  localPlayerId: PlayerId | null = null,
 ): { hand: CardModel[]; pozzettoStacks: GameState['pozzettoStacks']; pozzetto: Team['pozzetto'] } {
   const shouldClaim =
     trigger === 'discard'
@@ -271,12 +292,56 @@ function tryClaimPozzetto(
   }
 
   const reserve = game.pozzettoStacks[team.id]
+  // Kick off pickup flights while the reserve pile is still on screen.
+  playPozzettoClaimFlights({
+    teamId: team.id,
+    playerId,
+    cardIds: reserve.map((c) => c.id),
+    toLocalHand: playerId === localPlayerId,
+    slow: playerId !== localPlayerId,
+  })
   const newHand = sortHand([...hand, ...reserve])
   return {
     hand: newHand,
     pozzettoStacks: { ...game.pozzettoStacks, [team.id]: [] },
     pozzetto: { claimed: true, claimedByPlayerId: playerId, activated: team.pozzetto.activated },
   }
+}
+
+/**
+ * Discarding after the reserve is already in hand activates the Pozzetto
+ * (required for Show). Used by human discard, timer auto-discard, and bots.
+ */
+function pozzettoAfterDiscard(
+  claimPozzetto: Team['pozzetto'],
+  wasClaimedBeforeDiscard: boolean,
+): Team['pozzetto'] {
+  return {
+    ...claimPozzetto,
+    activated: wasClaimedBeforeDiscard ? true : claimPozzetto.activated,
+  }
+}
+
+/**
+ * If the player’s hand is empty and their team meets Show conditions, end
+ * the round immediately. Going out by discarding/melding the last card must
+ * not leave the match stuck mid-round waiting for a separate button press.
+ */
+function tryAutoShowEnd(
+  room: RoomState,
+  game: GameState,
+  team: Team,
+  playerId: PlayerId,
+): { ended: true; room: RoomState; game: GameState } | { ended: false } {
+  const handSize = game.hands[playerId]?.length ?? 0
+  const elig = evaluateShowEligibility(team, handSize)
+  if (!elig.eligible) return { ended: false }
+  const nextRoom = withTeam(room, team.id, (t) => ({
+    ...t,
+    pozzetto: { ...t.pozzetto, activated: true },
+  }))
+  const scored = endRoundWithScore(nextRoom, game, 'show', team.id)
+  return { ended: true, room: scored.room, game: scored.game }
 }
 
 function withTeam(room: RoomState, teamId: TeamId, updater: (team: Team) => Team): RoomState {
@@ -322,7 +387,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   localPlayerId: null,
   selectedCardIds: [],
   selectedMeldId: null,
-  topTouchInProgress: false, selectedDiscardCount: 0,
+  topTouchInProgress: false, selectedDiscardIds: [],
   lastActionError: null,
 
   actions: {
@@ -356,7 +421,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         localPlayerId: localPlayer.id,
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false, selectedDiscardIds: [],
         lastActionError: null,
       })
 
@@ -392,7 +457,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         localPlayerId: localPlayer.id,
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false, selectedDiscardIds: [],
         lastActionError: null,
       })
     },
@@ -450,7 +515,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         game,
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false, selectedDiscardIds: [],
         lastActionError: null,
       })
       // If a mock player opens the round, start their paced turn immediately.
@@ -469,7 +534,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     clearSelection: () =>
-      set({ selectedCardIds: [], selectedMeldId: null, topTouchInProgress: false, selectedDiscardCount: 0 }),
+      set({ selectedCardIds: [], selectedMeldId: null, topTouchInProgress: false, selectedDiscardIds: [] }),
 
     selectMeldTarget: (meldId: string | null) => set({ selectedMeldId: meldId }),
 
@@ -497,9 +562,10 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!game || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'draw') return
       if (game.discardPile.cards.length === 0) return
+      const topCard = game.discardPile.cards[game.discardPile.cards.length - 1]
       set({
         topTouchInProgress: true,
-        selectedDiscardCount: 1,
+        selectedDiscardIds: [topCard.id],
         selectedCardIds: [],
         selectedMeldId: null,
         lastActionError: null,
@@ -507,58 +573,59 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     cancelTopTouch: () => {
-      set({ topTouchInProgress: false, selectedDiscardCount: 0, selectedCardIds: [], selectedMeldId: null, lastActionError: null })
+      set({ topTouchInProgress: false, selectedDiscardIds: [], selectedCardIds: [], selectedMeldId: null, lastActionError: null })
     },
 
     toggleDiscardPileCard: (cardId: string) => {
-      const { game, topTouchInProgress, selectedDiscardCount } = get()
+      const { game, topTouchInProgress, selectedDiscardIds } = get()
       if (!game || !topTouchInProgress) return
       const cards = game.discardPile.cards
       const idx = cards.findIndex((c) => c.id === cardId)
       if (idx === -1) return
 
-      // Cards can only be picked up top-down, so the candidate set is always
-      // the contiguous run counting down from the top. Clicking a card that
-      // is already part of that run shrinks the run to end just above it
-      // (deselecting it and everything further from the top); clicking one
-      // that isn't yet included extends the run down to include it. The top
-      // card itself (distanceFromTop === 0) can never drop below a run
-      // length of 1 - it is the one mandatory Top Touch card.
-      const distanceFromTop = cards.length - 1 - idx
-      const isSelected = distanceFromTop < selectedDiscardCount
-      const nextCount = isSelected ? Math.max(1, distanceFromTop) : distanceFromTop + 1
-      set({ selectedDiscardCount: nextCount })
+      const topCard = cards[cards.length - 1]
+      // Top card is mandatory for Top Touch and can never be deselected.
+      if (cardId === topCard.id) return
+
+      const isSelected = selectedDiscardIds.includes(cardId)
+      const nextIds = isSelected
+        ? selectedDiscardIds.filter((id) => id !== cardId)
+        : [...selectedDiscardIds, cardId]
+      // Keep top card first for stable UI; preserve pile order otherwise.
+      const ordered = cards.filter((c) => nextIds.includes(c.id)).map((c) => c.id)
+      set({ selectedDiscardIds: ordered })
     },
 
     attemptMeld: () => {
-      const { game, room, localPlayerId, selectedCardIds, selectedMeldId, topTouchInProgress, selectedDiscardCount } = get()
+      const { game, room, localPlayerId, selectedCardIds, selectedMeldId, topTouchInProgress, selectedDiscardIds } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
       const hand = game.hands[localPlayerId]
 
-      // Two-phase Top Touch (item 5): the selected contiguous top-down run
-      // of discard cards (always including the top card) is combined with
-      // the current hand/meld selection and only ever attempted, never
-      // committed speculatively - the rest of the pile is granted to the
-      // hand ONLY on success, right here in the same action.
+      // Two-phase Top Touch (item 5): individually selected discard cards
+      // (always including the top card) are combined with the current
+      // hand/meld selection. Only on success does the rest of the pile join
+      // the hand — nothing is granted just for entering this mode.
       if (topTouchInProgress) {
         if (game.turn.phase !== 'draw') return
         if (game.discardPile.cards.length === 0) {
-          set({ lastActionError: 'Discard pile is empty.', topTouchInProgress: false, selectedDiscardCount: 0 })
+          set({ lastActionError: 'Discard pile is empty.', topTouchInProgress: false, selectedDiscardIds: [] })
           return
         }
-        const count = Math.max(1, Math.min(selectedDiscardCount, game.discardPile.cards.length))
-        const restOfPile = game.discardPile.cards.slice(0, game.discardPile.cards.length - count)
-        const selectedDiscardIds = game.discardPile.cards.slice(game.discardPile.cards.length - count).map((c) => c.id)
+        const topCard = game.discardPile.cards[game.discardPile.cards.length - 1]
+        const meldDiscardIds =
+          selectedDiscardIds.length > 0 && selectedDiscardIds.includes(topCard.id)
+            ? selectedDiscardIds
+            : [topCard.id]
 
         const result = attemptMeldAction({
           hand,
           team,
           selectedHandCardIds: selectedCardIds,
           targetMeldId: selectedMeldId,
-          topTouch: { discardPile: game.discardPile.cards, selectedDiscardIds },
+          topTouch: { discardPile: game.discardPile.cards, selectedDiscardIds: meldDiscardIds },
         })
 
         if (!result.ok) {
@@ -573,8 +640,10 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
             ? team.melds.map((m) => (m.id === result.meld.id ? result.meld : m))
             : [...team.melds, result.meld]
 
+        const usedIds = new Set(result.usedDiscardCards.map((c) => c.id))
+        const restOfPile = game.discardPile.cards.filter((c) => !usedIds.has(c.id))
         const combinedHand = sortHand([...result.hand, ...restOfPile])
-        const claim = tryClaimPozzetto(game, team, localPlayerId, combinedHand, 'meld-empty', combinedHand.length)
+        const claim = tryClaimPozzetto(game, team, localPlayerId, combinedHand, 'meld-empty', combinedHand.length, localPlayerId)
 
         const nextRoom = withTeam(room, team.id, (t) => ({ ...t, melds: meldsAfter, pozzetto: claim.pozzetto }))
 
@@ -591,7 +660,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
                 ? { playerId: localPlayerId, cardIds: restOfPile.map((c) => c.id), at: Date.now() }
                 : game.lastAcquired,
           },
-          topTouchInProgress: false, selectedDiscardCount: 0,
+          topTouchInProgress: false, selectedDiscardIds: [],
           selectedCardIds: [],
           selectedMeldId: null,
           lastActionError: null,
@@ -641,17 +710,30 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           ? team.melds.map((m) => (m.id === result.meld.id ? result.meld : m))
           : [...team.melds, result.meld]
 
-      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'meld-empty', result.hand.length)
+      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'meld-empty', result.hand.length, localPlayerId)
 
       const nextRoom = withTeam(room, team.id, (t) => ({ ...t, melds: meldsAfter, pozzetto: claim.pozzetto }))
+      const nextGame: GameState = {
+        ...game,
+        pozzettoStacks: claim.pozzettoStacks,
+        hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
+      }
+      const teamAfter = nextRoom.teams.find((t) => t.id === team.id)!
+      const autoShow = tryAutoShowEnd(nextRoom, nextGame, teamAfter, localPlayerId)
+      if (autoShow.ended) {
+        set({
+          room: autoShow.room,
+          game: autoShow.game,
+          selectedCardIds: [],
+          selectedMeldId: null,
+          lastActionError: null,
+        })
+        return
+      }
 
       set({
         room: nextRoom,
-        game: {
-          ...game,
-          pozzettoStacks: claim.pozzettoStacks,
-          hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
-        },
+        game: nextGame,
         selectedCardIds: [],
         selectedMeldId: null,
         lastActionError: null,
@@ -694,7 +776,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       }
 
       const handSizeAfterMeld = result.hand.length
-      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'meld-empty', handSizeAfterMeld)
+      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'meld-empty', handSizeAfterMeld, localPlayerId)
 
       const nextRoom = withTeam(room, team.id, (t) => ({
         ...t,
@@ -712,7 +794,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         },
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false, selectedDiscardIds: [],
         lastActionError: null,
       })
     },
@@ -731,24 +813,39 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!result) return
 
       const wasClaimedBefore = team.pozzetto.claimed
-      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'discard', result.handSizeBeforeDiscard)
-      const activated = wasClaimedBefore ? true : team.pozzetto.activated
-      const finalPozzetto = { ...claim.pozzetto, activated }
-
+      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'discard', result.handSizeBeforeDiscard, localPlayerId)
+      const finalPozzetto = pozzettoAfterDiscard(claim.pozzetto, wasClaimedBefore)
       const nextRoom = withTeam(room, team.id, (t) => ({ ...t, pozzetto: finalPozzetto }))
+      const nextGame: GameState = {
+        ...game,
+        discardPile: { cards: result.discardPile },
+        pozzettoStacks: claim.pozzettoStacks,
+        hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
+      }
+      const teamAfter = nextRoom.teams.find((t) => t.id === team.id)!
+      const autoShow = tryAutoShowEnd(nextRoom, nextGame, teamAfter, localPlayerId)
+      if (autoShow.ended) {
+        set({
+          room: autoShow.room,
+          game: autoShow.game,
+          selectedCardIds: [],
+          selectedMeldId: null,
+          topTouchInProgress: false,
+          selectedDiscardIds: [],
+          lastActionError: null,
+        })
+        return
+      }
 
       set({
         room: nextRoom,
         game: {
-          ...game,
-          discardPile: { cards: result.discardPile },
-          pozzettoStacks: claim.pozzettoStacks,
-          hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
+          ...nextGame,
           turn: advanceTurn(game, room, localPlayerId),
         },
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false, selectedDiscardIds: [],
         lastActionError: null,
       })
 
@@ -796,7 +893,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         game: scoredGame,
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false, selectedDiscardIds: [],
         lastActionError: null,
       })
     },
@@ -812,7 +909,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         selectedCardIds: [],
         selectedMeldId: null,
         topTouchInProgress: false,
-        selectedDiscardCount: 0,
+        selectedDiscardIds: [],
       })
     },
 
@@ -854,7 +951,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           },
           selectedCardIds: [],
           selectedMeldId: null,
-          topTouchInProgress: false, selectedDiscardCount: 0,
+          topTouchInProgress: false, selectedDiscardIds: [],
           lastActionError: 'Time expired — turn skipped automatically.',
         })
         setTimeout(() => get().actions._mockAdvanceUntilLocal(), BOT_BETWEEN_TURNS_MS)
@@ -865,25 +962,41 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!result) return
 
       const wasClaimedBefore = team.pozzetto.claimed
-      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'discard', result.handSizeBeforeDiscard)
-      const activated = wasClaimedBefore ? true : team.pozzetto.activated
-      const finalPozzetto = { ...claim.pozzetto, activated }
+      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'discard', result.handSizeBeforeDiscard, localPlayerId)
+      const finalPozzetto = pozzettoAfterDiscard(claim.pozzetto, wasClaimedBefore)
       const nextRoom = withTeam(room, team.id, (t) => ({ ...t, pozzetto: finalPozzetto }))
+      const nextGame: GameState = {
+        ...game,
+        stock,
+        discardPile: { cards: result.discardPile },
+        pozzettoStacks: claim.pozzettoStacks,
+        hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
+        lastAcquired,
+      }
+      const teamAfter = nextRoom.teams.find((t) => t.id === team.id)!
+      const autoShow = tryAutoShowEnd(nextRoom, nextGame, teamAfter, localPlayerId)
+      if (autoShow.ended) {
+        set({
+          room: autoShow.room,
+          game: autoShow.game,
+          selectedCardIds: [],
+          selectedMeldId: null,
+          topTouchInProgress: false,
+          selectedDiscardIds: [],
+          lastActionError: null,
+        })
+        return
+      }
 
       set({
         room: nextRoom,
         game: {
-          ...game,
-          stock,
-          discardPile: { cards: result.discardPile },
-          pozzettoStacks: claim.pozzettoStacks,
-          hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
+          ...nextGame,
           turn: advanceTurn(game, room, localPlayerId),
-          lastAcquired,
         },
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false, selectedDiscardIds: [],
         lastActionError: 'Time expired — turn ended automatically.',
       })
 
@@ -912,27 +1025,33 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       set({ game: { ...game, turn: { ...game.turn, isPaused: true, pausedAt: Date.now() } } })
     },
 
-    nextRound: () => {
-      const { room, game } = get()
-      if (!room || !game) return
-      if (game.gameOverTeamId) {
-        set({
-          room: { ...room, status: 'lobby' },
-          game: null,
-          selectedCardIds: [],
-          selectedMeldId: null,
-          topTouchInProgress: false,
-          selectedDiscardCount: 0,
-        })
-        return
-      }
+    startNewGame: () => {
+      const { room } = get()
+      if (!room) return
       botTurnGeneration += 1
-      const teams = room.teams.map((t) => ({ ...t, melds: [], hasGoneOut: false, pozzetto: initialPozzettoState() }))
+      // Full match reset: wipe scores, melds, pozzetto, history — then redeal.
+      const teams = room.teams.map((t) => ({
+        ...t,
+        melds: [],
+        hasGoneOut: false,
+        score: 0,
+        pozzetto: initialPozzettoState(),
+      }))
       const nextRoomState: RoomState = { ...room, teams, status: 'in-progress' }
       const nextGame = dealNewRound(nextRoomState)
-      nextGame.round = game.round + 1
-      nextGame.roundScoresHistory = game.roundScoresHistory
-      set({ room: nextRoomState, game: nextGame, selectedCardIds: [], selectedMeldId: null, topTouchInProgress: false, selectedDiscardCount: 0, lastActionError: null })
+      nextGame.round = 1
+      nextGame.roundScoresHistory = []
+      nextGame.gameOverTeamId = null
+      nextGame.lastRoundScores = null
+      set({
+        room: nextRoomState,
+        game: nextGame,
+        selectedCardIds: [],
+        selectedMeldId: null,
+        topTouchInProgress: false,
+        selectedDiscardIds: [],
+        lastActionError: null,
+      })
       if (nextGame.turn.activePlayerId !== get().localPlayerId) {
         setTimeout(() => get().actions._mockAdvanceUntilLocal(), BOT_BETWEEN_TURNS_MS)
       }
@@ -942,12 +1061,38 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const { room } = get()
       if (!room) return
       botTurnGeneration += 1
+      // Exit table play but keep the room (players / teams) so lobby can restart.
+      const teams = room.teams.map((t) => ({
+        ...t,
+        melds: [],
+        hasGoneOut: false,
+        pozzetto: initialPozzettoState(),
+      }))
+      const players = room.players.map((p) => ({ ...p, isReady: false }))
       set({
-        room: { ...room, status: 'lobby' },
+        room: { ...room, teams, players, status: 'lobby' },
         game: null,
         selectedCardIds: [],
         selectedMeldId: null,
-        topTouchInProgress: false, selectedDiscardCount: 0,
+        topTouchInProgress: false,
+        selectedDiscardIds: [],
+        lastActionError: null,
+      })
+    },
+
+    exitToHome: () => {
+      botTurnGeneration += 1
+      // Wipe all in-memory session state (there is no localStorage persistence;
+      // this is the full "clear cache" / leave site session for the client).
+      set({
+        room: null,
+        game: null,
+        localPlayerId: null,
+        selectedCardIds: [],
+        selectedMeldId: null,
+        topTouchInProgress: false,
+        selectedDiscardIds: [],
+        lastActionError: null,
       })
     },
 
@@ -991,39 +1136,65 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
     if (!latest.game || !latest.room || isCancelled()) return
     const liveTeam = findTeamForPlayer(latest.room, activeId)
     if (!liveTeam) return
+    // Skip draw if this seat already drew (e.g. tests / resumed mid-turn).
+    if (!latest.game.turn.hasDrawnThisTurn) {
     let hand = latest.game.hands[activeId]
     let melds = liveTeam.melds
     const drawPlan = planAiDraw(hand, melds, latest.game.discardPile.cards, liveTeam.id)
 
     if (drawPlan.source === 'top-touch' && latest.game.discardPile.cards.length > 0) {
       const discardPile = latest.game.discardPile.cards
-      const topId = discardPile[discardPile.length - 1].id
+      const selectedDiscardIds =
+        drawPlan.selectedDiscardIds.length > 0
+          ? drawPlan.selectedDiscardIds
+          : [discardPile[discardPile.length - 1].id]
       const result = attemptMeldAction({
         hand,
         team: liveTeam,
         selectedHandCardIds: drawPlan.handCardIds,
         targetMeldId: drawPlan.targetMeldId,
-        topTouch: { discardPile, selectedDiscardIds: [topId] },
+        topTouch: { discardPile, selectedDiscardIds },
       })
       if (result.ok) {
         for (const card of result.usedDiscardCards) {
-          seedFlipOriginFromAnchor(card.id, 'discard')
+          seedFlipOriginFromAnchor(card.id, 'discard', botFlip)
         }
-        for (const id of drawPlan.handCardIds) seedFlipOriginFromAnchor(id, handAnchor)
-        const usedCount = result.usedDiscardCards.length
-        const restOfPile = discardPile.slice(0, discardPile.length - usedCount)
+        for (const id of drawPlan.handCardIds) seedFlipOriginFromAnchor(id, handAnchor, botFlip)
+        const usedIds = new Set(result.usedDiscardCards.map((c) => c.id))
+        const restOfPile = discardPile.filter((c) => !usedIds.has(c.id))
         const meldsAfter =
           result.kind === 'append'
             ? liveTeam.melds.map((m) => (m.id === result.meld.id ? result.meld : m))
             : [...liveTeam.melds, result.meld]
         // Remainder of the pile joins the hand (same as human Top Touch success).
-        const combinedHand = sortHand([...result.hand, ...restOfPile])
-        const nextRoom = withTeam(latest.room, liveTeam.id, (t) => ({ ...t, melds: meldsAfter }))
+        // If that leaves the bot at 0 cards, claim Pozzetto mid-turn (any seat).
+        let combinedHand = sortHand([...result.hand, ...restOfPile])
+        let nextStacks = latest.game.pozzettoStacks
+        let nextPozzetto = liveTeam.pozzetto
+        if (combinedHand.length === 0 && !liveTeam.pozzetto.claimed) {
+          const claim = tryClaimPozzetto(
+            latest.game,
+            liveTeam,
+            activeId,
+            combinedHand,
+            'meld-empty',
+            0,
+            get().localPlayerId,
+          )
+          combinedHand = claim.hand
+          nextStacks = claim.pozzettoStacks
+          nextPozzetto = claim.pozzetto
+        }
+        const nextRoom = withTeam(latest.room, liveTeam.id, (t) => ({
+          ...t,
+          melds: meldsAfter,
+          pozzetto: nextPozzetto,
+        }))
         const handRect = getFlipAnchorRect(handAnchor)
         const discardRect = getFlipAnchorRect('discard')
         if (discardRect && handRect) {
           for (const _card of restOfPile) {
-            void playDetachedCardFlight({ from: discardRect, to: handRect, faceDown: true })
+            void botDetachedFlight({ from: discardRect, to: handRect, faceDown: true })
           }
         }
         set({
@@ -1032,6 +1203,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
             ...latest.game,
             hands: { ...latest.game.hands, [activeId]: combinedHand },
             discardPile: { cards: [] },
+            pozzettoStacks: nextStacks,
             turn: { ...latest.game.turn, phase: 'action', hasDrawnThisTurn: true },
             lastAcquired: {
               playerId: activeId,
@@ -1048,7 +1220,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
         const handRect = getFlipAnchorRect(handAnchor)
         const drawResult = performDrawFromStock(latest.game.stock, hand)
         if (stockRect && handRect && drawResult.drawnCard) {
-          void playDetachedCardFlight({ from: stockRect, to: handRect, faceDown: true })
+          void botDetachedFlight({ from: stockRect, to: handRect, faceDown: true })
         }
         set({
           game: {
@@ -1071,7 +1243,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
       const handRect = getFlipAnchorRect(handAnchor)
       const drawResult = performDrawFromStock(latest.game.stock, hand)
       if (stockRect && handRect && drawResult.drawnCard) {
-        void playDetachedCardFlight({ from: stockRect, to: handRect, faceDown: true })
+        void botDetachedFlight({ from: stockRect, to: handRect, faceDown: true })
       }
       set({
         game: {
@@ -1089,136 +1261,254 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
       await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
       if (isCancelled()) return
     }
+    } // end !hasDrawnThisTurn
   }
 
   // Plan melds/appends/discard against the post-draw hand.
-  {
-    const latest = get()
-    if (!latest.game || !latest.room || isCancelled()) return
-    const currentTeam = findTeamForPlayer(latest.room, activeId)
-    if (!currentTeam) return
-    let hand = latest.game.hands[activeId]
-    let melds = currentTeam.melds
-
-    const meldPlans = planAiMelds(hand, currentTeam.id)
-    // ----- 2) Lay each planned set/sequence, one animated action at a time -----
-    for (const plan of meldPlans.plans) {
-      const snap = get()
-      if (!snap.game || !snap.room || isCancelled()) return
-      const liveTeam = findTeamForPlayer(snap.room, activeId)
-      if (!liveTeam) return
-      hand = snap.game.hands[activeId]
-      melds = liveTeam.melds
-      const cards = hand.filter((c) => plan.cardIds.includes(c.id))
-      if (cards.length !== plan.cardIds.length) continue
-      for (const card of cards) seedFlipOriginFromAnchor(card.id, handAnchor)
-      const built = createMeldFromHand(hand, plan.cardIds, plan.kind, liveTeam.id)
-      if (!built.ok) continue
-      hand = built.hand
-      melds = [...melds, built.meld]
-      const nextRoom = withTeam(snap.room, liveTeam.id, (t) => ({ ...t, melds }))
+  // Order: append into existing melds FIRST (so e.g. Queens join an existing
+  // Queens set), then open new melds, then append again. If the bot empties
+  // their hand mid-turn and claims Pozzetto, re-run the action loop so they
+  // can play from the reserve (teammate and opponents alike).
+  async function runAppendPass(): Promise<boolean> {
+    let claimedMidTurn = false
+    const snap = get()
+    if (!snap.game || !snap.room || isCancelled()) return false
+    const liveTeam = findTeamForPlayer(snap.room, activeId)
+    if (!liveTeam) return false
+    let hand = snap.game.hands[activeId]
+    let melds = liveTeam.melds
+    const appendPlans = planAiAppends(hand, melds)
+    for (const plan of appendPlans.plans) {
+      const step = get()
+      if (!step.game || !step.room || isCancelled()) return claimedMidTurn
+      const stepTeam = findTeamForPlayer(step.room, activeId)
+      if (!stepTeam) return claimedMidTurn
+      hand = step.game.hands[activeId]
+      melds = stepTeam.melds
+      const meld = melds.find((m) => m.id === plan.meldId)
+      const card = hand.find((c) => c.id === plan.cardId)
+      if (!meld || !card) continue
+      seedFlipOriginFromAnchor(card.id, handAnchor, botFlip)
+      // Auto-resolve Slide to the top edge — bots have no UI prompt, and
+      // naturalizing a wild-filled slot (e.g. 7 into 6-★-8-9-10) is preferred.
+      const result = appendCardFromHand(hand, plan.cardId, meld, 'top')
+      if (!result.ok) continue
+      hand = result.hand
+      melds = melds.map((m) => (m.id === meld.id ? result.meld : m))
+      let nextRoom = withTeam(step.room, stepTeam.id, (t) => ({ ...t, melds }))
+      let nextStacks = step.game.pozzettoStacks
+      if (hand.length === 0 && !stepTeam.pozzetto.claimed) {
+        const claim = tryClaimPozzetto(
+          step.game,
+          stepTeam,
+          activeId,
+          hand,
+          'meld-empty',
+          0,
+          get().localPlayerId,
+        )
+        hand = claim.hand
+        nextStacks = claim.pozzettoStacks
+        nextRoom = withTeam(nextRoom, stepTeam.id, (t) => ({ ...t, pozzetto: claim.pozzetto }))
+        if (claim.pozzetto.claimed && !stepTeam.pozzetto.claimed) claimedMidTurn = true
+      }
       set({
         room: nextRoom,
         game: {
-          ...snap.game,
-          hands: { ...snap.game.hands, [activeId]: sortHand(hand) },
+          ...step.game,
+          pozzettoStacks: nextStacks,
+          hands: { ...step.game.hands, [activeId]: sortHand(hand) },
+          turn: { ...step.game.turn, phase: 'action', hasDrawnThisTurn: true },
         },
       })
       await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
-      if (isCancelled()) return
+      if (isCancelled()) return claimedMidTurn
     }
+    return claimedMidTurn
+  }
 
-    // ----- 3) Append single cards onto existing team melds -----
-    {
-      const snap = get()
-      if (!snap.game || !snap.room || isCancelled()) return
-      const liveTeam = findTeamForPlayer(snap.room, activeId)
-      if (!liveTeam) return
-      hand = snap.game.hands[activeId]
-      melds = liveTeam.melds
-      const appendPlans = planAiAppends(hand, melds)
-      for (const plan of appendPlans.plans) {
-        const step = get()
-        if (!step.game || !step.room || isCancelled()) return
-        const stepTeam = findTeamForPlayer(step.room, activeId)
-        if (!stepTeam) return
-        hand = step.game.hands[activeId]
-        melds = stepTeam.melds
-        const meld = melds.find((m) => m.id === plan.meldId)
-        const card = hand.find((c) => c.id === plan.cardId)
-        if (!meld || !card) continue
-        seedFlipOriginFromAnchor(card.id, handAnchor)
-        const result = appendCardFromHand(hand, plan.cardId, meld)
-        // Skip Slide-choice appends (no UI prompt available for mock players).
-        if (!result.ok) continue
-        hand = result.hand
-        melds = melds.map((m) => (m.id === meld.id ? result.meld : m))
-        const nextRoom = withTeam(step.room, stepTeam.id, (t) => ({ ...t, melds }))
-        set({
-          room: nextRoom,
-          game: {
-            ...step.game,
-            hands: { ...step.game.hands, [activeId]: sortHand(hand) },
-          },
-        })
-        await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
-        if (isCancelled()) return
-      }
-    }
+  async function runNewMeldPass(): Promise<boolean> {
+    let claimedMidTurn = false
+    const latest = get()
+    if (!latest.game || !latest.room || isCancelled()) return false
+    const currentTeam = findTeamForPlayer(latest.room, activeId)
+    if (!currentTeam) return false
+    let hand = latest.game.hands[activeId]
+    const melds = currentTeam.melds
 
-    // ----- 4) Discard (flight from bot hand stack → discard pile) -----
-    {
+    const meldPlans = planAiMelds(hand, currentTeam.id, melds)
+    for (const plan of meldPlans.plans) {
       const snap = get()
-      if (!snap.game || !snap.room || isCancelled()) return
+      if (!snap.game || !snap.room || isCancelled()) return claimedMidTurn
       const liveTeam = findTeamForPlayer(snap.room, activeId)
-      if (!liveTeam) return
+      if (!liveTeam) return claimedMidTurn
       hand = snap.game.hands[activeId]
-      const discardCard = pickAiDiscard(hand)
-      if (discardCard) {
-        seedFlipOriginFromAnchor(discardCard.id, handAnchor)
-        const handSizeBeforeDiscard = hand.length
-        const finalHand = hand.filter((c) => c.id !== discardCard.id)
-        const discardPile = [...snap.game.discardPile.cards, discardCard]
+      const cards = hand.filter((c) => plan.cardIds.includes(c.id))
+      if (cards.length !== plan.cardIds.length) continue
+      for (const card of cards) seedFlipOriginFromAnchor(card.id, handAnchor, botFlip)
+      const built = createMeldFromHand(hand, plan.cardIds, plan.kind, liveTeam.id)
+      if (!built.ok) continue
+      hand = built.hand
+      const nextMelds = [...liveTeam.melds, built.meld]
+      let nextRoom = withTeam(snap.room, liveTeam.id, (t) => ({ ...t, melds: nextMelds }))
+      let nextStacks = snap.game.pozzettoStacks
+      if (hand.length === 0 && !liveTeam.pozzetto.claimed) {
         const claim = tryClaimPozzetto(
           snap.game,
           liveTeam,
           activeId,
-          finalHand,
-          'discard',
-          handSizeBeforeDiscard,
+          hand,
+          'meld-empty',
+          0,
+          get().localPlayerId,
         )
-        const nextRoom = withTeam(snap.room, liveTeam.id, (t) => ({
-          ...t,
-          pozzetto: claim.pozzetto,
-        }))
-        const nextTurn = advanceTurn(snap.game, snap.room, activeId)
-        set({
-          room: nextRoom,
-          game: {
-            ...snap.game,
-            hands: { ...snap.game.hands, [activeId]: sortHand(claim.hand) },
-            discardPile: { cards: discardPile },
-            pozzettoStacks: claim.pozzettoStacks,
-            turn: nextTurn,
-          },
-        })
+        hand = claim.hand
+        nextStacks = claim.pozzettoStacks
+        nextRoom = withTeam(nextRoom, liveTeam.id, (t) => ({ ...t, pozzetto: claim.pozzetto }))
+        if (claim.pozzetto.claimed && !liveTeam.pozzetto.claimed) claimedMidTurn = true
+      }
+      set({
+        room: nextRoom,
+        game: {
+          ...snap.game,
+          pozzettoStacks: nextStacks,
+          hands: { ...snap.game.hands, [activeId]: sortHand(hand) },
+          turn: { ...snap.game.turn, phase: 'action', hasDrawnThisTurn: true },
+        },
+      })
+      await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
+      if (isCancelled()) return claimedMidTurn
+    }
+    return claimedMidTurn
+  }
+
+  // Up to 2 full action cycles: the second covers playing from a mid-turn
+  // Pozzetto pickup (running-turn activation).
+  for (let cycle = 0; cycle < 2; cycle += 1) {
+    const claimedA = await runAppendPass()
+    if (isCancelled()) return
+    const claimedM = await runNewMeldPass()
+    if (isCancelled()) return
+    const claimedB = await runAppendPass()
+    if (isCancelled()) return
+    if (!(claimedA || claimedM || claimedB)) break
+  }
+
+  /** Discard one card (claiming Pozzetto on last-card discard), then advance. */
+  async function finishBotDiscard(): Promise<boolean> {
+    const snap = get()
+    if (!snap.game || !snap.room || isCancelled()) return false
+    const liveTeam = findTeamForPlayer(snap.room, activeId)
+    if (!liveTeam) return false
+    const hand = snap.game.hands[activeId]
+    if (hand.length === 0) return false
+    const discardCard = pickAiDiscard(hand) ?? hand[0]
+    seedFlipOriginFromAnchor(discardCard.id, handAnchor, botFlip)
+    const handSizeBeforeDiscard = hand.length
+    const finalHand = hand.filter((c) => c.id !== discardCard.id)
+    const discardPile = [...snap.game.discardPile.cards, discardCard]
+    const wasClaimedBefore = liveTeam.pozzetto.claimed
+    const claim = tryClaimPozzetto(
+      snap.game,
+      liveTeam,
+      activeId,
+      finalHand,
+      'discard',
+      handSizeBeforeDiscard,
+      get().localPlayerId,
+    )
+    const finalPozzetto = pozzettoAfterDiscard(claim.pozzetto, wasClaimedBefore)
+    const nextRoom = withTeam(snap.room, liveTeam.id, (t) => ({
+      ...t,
+      pozzetto: finalPozzetto,
+    }))
+    const nextGame: GameState = {
+      ...snap.game,
+      hands: { ...snap.game.hands, [activeId]: sortHand(claim.hand) },
+      discardPile: { cards: discardPile },
+      pozzettoStacks: claim.pozzettoStacks,
+    }
+    const teamAfter = nextRoom.teams.find((t) => t.id === liveTeam.id)!
+    const autoShow = tryAutoShowEnd(nextRoom, nextGame, teamAfter, activeId)
+    if (autoShow.ended) {
+      set({ room: autoShow.room, game: autoShow.game })
+      await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
+      return true
+    }
+
+    const nextTurn = advanceTurn(snap.game, snap.room, activeId)
+    set({
+      room: nextRoom,
+      game: {
+        ...nextGame,
+        turn: nextTurn,
+      },
+    })
+    await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
+    if (isCancelled()) return true
+
+    await sleepRespectingPause(BOT_BETWEEN_TURNS_MS, isCancelled)
+    if (isCancelled()) return true
+    if (nextTurn.activePlayerId !== get().localPlayerId) {
+      get().actions._mockAdvanceUntilLocal()
+    }
+    return true
+  }
+
+  // Safety: if the hand is empty and Pozzetto is still unclaimed (any bot seat,
+  // including the human's teammate), pick it up mid-turn and play from it.
+  {
+    const snap = get()
+    if (!snap.game || !snap.room || isCancelled()) return
+    const liveTeam = findTeamForPlayer(snap.room, activeId)
+    const hand = snap.game.hands[activeId] ?? []
+    if (liveTeam && hand.length === 0 && !liveTeam.pozzetto.claimed) {
+      const claim = tryClaimPozzetto(
+        snap.game,
+        liveTeam,
+        activeId,
+        hand,
+        'meld-empty',
+        0,
+        get().localPlayerId,
+      )
+      set({
+        room: withTeam(snap.room, liveTeam.id, (t) => ({ ...t, pozzetto: claim.pozzetto })),
+        game: {
+          ...snap.game,
+          hands: { ...snap.game.hands, [activeId]: sortHand(claim.hand) },
+          pozzettoStacks: claim.pozzettoStacks,
+        },
+      })
+      if (claim.pozzetto.claimed && claim.hand.length > 0) {
         await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
         if (isCancelled()) return
-
-        await sleepRespectingPause(BOT_BETWEEN_TURNS_MS, isCancelled)
+        await runAppendPass()
         if (isCancelled()) return
-        if (nextTurn.activePlayerId !== get().localPlayerId) {
-          get().actions._mockAdvanceUntilLocal()
-        }
-        return
+        await runNewMeldPass()
+        if (isCancelled()) return
+        await runAppendPass()
+        if (isCancelled()) return
       }
     }
   }
 
-  // No discard possible (empty hand) — still advance the turn.
+  // ----- Discard: required whenever the bot still holds cards -----
+  if (await finishBotDiscard()) return
+  if (isCancelled()) return
+
+  // Empty hand (no discard) — Show if eligible, otherwise advance the turn.
   {
     const snap = get()
     if (!snap.game || !snap.room || isCancelled()) return
+    const liveTeam = findTeamForPlayer(snap.room, activeId)
+    if (liveTeam) {
+      const autoShow = tryAutoShowEnd(snap.room, snap.game, liveTeam, activeId)
+      if (autoShow.ended) {
+        set({ room: autoShow.room, game: autoShow.game })
+        return
+      }
+    }
     const nextTurn = advanceTurn(snap.game, snap.room, activeId)
     set({ game: { ...snap.game, turn: nextTurn } })
     await sleepRespectingPause(BOT_BETWEEN_TURNS_MS, isCancelled)
