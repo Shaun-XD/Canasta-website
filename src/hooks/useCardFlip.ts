@@ -90,7 +90,7 @@ export function playDetachedCardFlight(opts: {
   width?: number
   height?: number
 }): Promise<void> {
-  const width = opts.width ?? 56
+  const width = opts.width ?? 72
   const height = opts.height ?? Math.round(width * 1.4)
   const fromLeft = opts.from.left
   const fromTop = opts.from.top
@@ -209,13 +209,39 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   return ref
 }
 
+/** Tracks how many in-flight ghosts are currently hiding a given node. */
+const flightHideCount = new WeakMap<HTMLElement, number>()
+/** Active Animation per node so a newer flight can cancel a stale one. */
+const activeFlight = new WeakMap<HTMLElement, Animation>()
+
 /**
  * Plays the actual FLIP flight on a fixed-position clone of `node` appended
  * to `document.body`. `node` itself is hidden for the duration and restored
  * the instant the ghost's flight finishes.
+ *
+ * Overlapping flights on the same node used to permanently stick it at
+ * `visibility: hidden`: a second flight would capture `originalVisibility`
+ * as already `'hidden'`, then the first cleanup would "restore" to hidden.
+ * That made the player's hand look like a single stacked card (only the
+ * topmost un-hidden card/edges visible). We now refcount hides and always
+ * clear visibility when the last flight ends, and cancel any prior flight
+ * on the same node before starting a new one.
  */
 function playFlightGhost(node: HTMLElement, dx: number, dy: number): void {
+  const prior = activeFlight.get(node)
+  if (prior) {
+    try {
+      prior.cancel()
+    } catch {
+      // ignore - already finished
+    }
+  }
+
   const rect = node.getBoundingClientRect()
+  // Zero-size nodes can't produce a visible flight (and hiding them is how
+  // a collapsed flex item permanently "eats" the hand fan). Bail cleanly.
+  if (rect.width < 2 || rect.height < 2) return
+
   const ghost = node.cloneNode(true) as HTMLElement
   ghost.style.position = 'fixed'
   ghost.style.left = `${rect.left}px`
@@ -228,9 +254,10 @@ function playFlightGhost(node: HTMLElement, dx: number, dy: number): void {
   // Clear any inherited hover/selection transforms on the clone so the
   // flight itself isn't double-scaled / mid-lift.
   ghost.style.transform = 'none'
+  ghost.style.visibility = 'visible'
   document.body.appendChild(ghost)
 
-  const originalVisibility = node.style.visibility
+  flightHideCount.set(node, (flightHideCount.get(node) ?? 0) + 1)
   node.style.visibility = 'hidden'
 
   const arcLift = Math.min(36, Math.hypot(dx, dy) * 0.18)
@@ -242,9 +269,18 @@ function playFlightGhost(node: HTMLElement, dx: number, dy: number): void {
     ],
     { duration: FLIP_DURATION_MS, easing: FLIP_EASING, fill: 'none' },
   )
+  activeFlight.set(node, anim)
 
   const cleanup = () => {
-    node.style.visibility = originalVisibility
+    if (activeFlight.get(node) === anim) activeFlight.delete(node)
+    const remaining = (flightHideCount.get(node) ?? 1) - 1
+    if (remaining <= 0) {
+      flightHideCount.delete(node)
+      // Always clear - never restore a previously-captured 'hidden'.
+      node.style.visibility = ''
+    } else {
+      flightHideCount.set(node, remaining)
+    }
     ghost.remove()
   }
   anim.addEventListener('finish', cleanup)

@@ -2,9 +2,9 @@ import { useRef } from 'react'
 import type { CardModel } from '../types/game'
 import { AnimatedCard } from './AnimatedCard'
 
-export const DISCARD_CARD_WIDTH = 56
+export const DISCARD_CARD_WIDTH = 72
 /** Fraction of each card's width that the next card overlaps, leaving the rest as the visible right-edge sliver. */
-const OVERLAP_RATIO = 0.72
+const OVERLAP_RATIO = 0.7
 /**
  * Max pointer travel (px) between pointerdown and the matching click for a
  * gesture to still count as a "tap" that toggles selection. Anything past
@@ -89,8 +89,12 @@ export function DiscardPileView({
   }
 
   if (cards.length === 0) {
+    const emptyH = Math.round(DISCARD_CARD_WIDTH * 1.4)
     return (
-      <div className="flex h-[73px] w-[56px] items-center justify-center rounded-lg border-2 border-dashed border-white/20 text-[10px] text-white/40">
+      <div
+        className="flex items-center justify-center rounded-lg border-2 border-dashed border-white/20 text-[10px] text-white/40"
+        style={{ width: DISCARD_CARD_WIDTH, height: emptyH }}
+      >
         empty
       </div>
     )

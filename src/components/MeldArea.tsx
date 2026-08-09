@@ -19,9 +19,9 @@ const CLASSIFICATION_COLOR: Record<MeldClassification, string> = {
   'limpa-2s': 'bg-yellow-300 text-yellow-950',
 }
 
-/** Card width used for melded groups (item 4: bumped up from the previous 46px). */
-const MELD_CARD_WIDTH = 58
-const MELD_CARD_OVERLAP = -42
+/** Card width used for melded groups — kept large enough to read suit/rank at a glance. */
+const MELD_CARD_WIDTH = 72
+const MELD_CARD_OVERLAP = -52
 
 /** Renders a team's laid-down melds (Sets & Sequences), one card-fan per meld. */
 export function MeldArea({
@@ -44,7 +44,7 @@ export function MeldArea({
 }) {
   return (
     <div
-      className={`flex min-h-[136px] w-full flex-wrap content-start items-start gap-3 overflow-y-auto overflow-x-visible rounded-xl border border-white/10 bg-black/15 p-3 ${
+      className={`flex min-h-[168px] w-full flex-wrap content-start items-start gap-4 overflow-y-auto overflow-x-visible rounded-xl border border-white/10 bg-black/15 p-3 ${
         align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
       }`}
     >

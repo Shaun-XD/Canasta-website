@@ -413,21 +413,23 @@ export function Table() {
           {/* Extra top/side padding here is intentional: it gives the
               enlarged/selected card (translate-y + ring) room to render
               fully instead of being clipped by this scroll container
-              (item 5). */}
-          <div className="flex max-w-full items-end overflow-x-auto overflow-y-visible px-4 pb-2 pt-6 scrollbar-thin">
+              (item 5). `shrink-0` on each card is required - without it
+              flex-shrink + negative margins collapses the whole hand into
+              a single stacked pile. */}
+          <div className="flex w-full max-w-full items-end justify-center overflow-x-auto overflow-y-visible px-4 pb-2 pt-8 scrollbar-thin">
             {orderedLocalHand.map((card, i) => (
               <div
                 key={card.id}
                 onPointerDown={() => handleCardPointerDown(card.id)}
                 onPointerEnter={() => handleCardPointerEnter(card.id)}
-                className={`inline-block touch-none transition-opacity ${draggingId === card.id ? 'opacity-70' : ''}`}
-                style={{ marginLeft: i === 0 ? 0 : -14 }}
+                className={`relative shrink-0 touch-none transition-opacity ${draggingId === card.id ? 'opacity-70' : ''}`}
+                style={{ marginLeft: i === 0 ? 0 : -18, zIndex: i }}
               >
                 <AnimatedCard
                   flipId={card.id}
                   rank={card.rank}
                   suit={card.suit}
-                  width={68}
+                  width={88}
                   selected={selectedCardIds.includes(card.id)}
                   isNew={isRecentlyAcquired(card.id)}
                   onClick={() => toggleSelectCard(card.id)}
