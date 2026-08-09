@@ -3,16 +3,24 @@
 ## Overview
 
 An online multiplayer Canasta card game, played 2 vs 2. This repository
-currently contains the **frontend** of the app: a fully interactive UI shell
-with mocked/local game state, ready to be wired up to a real
-server-authoritative rules engine once the exact Canasta ruleset (deck
-composition, meld/canasta requirements, going-out conditions, wild card
-handling, and scoring) is finalized.
+contains the **frontend** app plus a fully client-side implementation of the
+**real Rajasthani Canasta rules engine** — 108-card deck (2 decks + 4
+jokers), Set/Sequence melds with wild-card limits, Canasta/Limpa
+classification & bonuses, the dynamic wild-card "Slide", the 11-card
+Pozzetto reserve stack per team, Top Touch discard-pile pickup, Show/Open
+Show going-out conditions, sudden-death stock depletion, and full round
+scoring.
 
-The official rules reference for this project lives in
-`Canasta Rules_2025.pdf` at the repo root, but note that **the exact ruleset
-used by the app has not been finalized yet** — see the "Game rules status"
-section below.
+The official rules reference lives in `Canasta Rules_2025.pdf` at the repo
+root. Two points from that ruleset were left open by the product owner and
+are marked with `TODO(rules)` at their point of use in the code:
+
+1. The default match target score (implemented as **2100**, configurable
+   per room at creation time).
+2. Whether the -100/-500 style tournament penalties (unclaimed Pozzetto,
+   wrong-meld detection) apply as specified — implemented as given since no
+   contradicting guidance was provided, but flagged for confirmation since
+   they're noted as carried over from an earlier tournament ruleset.
 
 ## Tech stack
 
@@ -20,10 +28,10 @@ section below.
 - [Zustand](https://github.com/pmndrs/zustand) for client-side state management
 - [Tailwind CSS](https://tailwindcss.com/) for styling
 - [React Router](https://reactrouter.com/) for navigation (`/`, `/lobby/:roomId`, `/game/:roomId`)
+- [Vitest](https://vitest.dev/) for unit-testing the rules engine
 - [socket.io-client](https://socket.io/docs/v4/client-api/) is included as a dependency for future
   real-time wiring, but is **not connected to any server yet** — see
-  `src/lib/socket.ts` for the placeholder setup and a sketch of the intended
-  event contract.
+  `src/lib/socket.ts`.
 
 All card, avatar, and table visuals are original SVG/CSS generated in-project
 (no third-party image assets). See `assets/MANIFEST.json` for the full asset
@@ -38,9 +46,9 @@ npm run dev
 
 The dev server runs at `http://localhost:5173` by default. Open two browser
 windows/tabs pointed at the same room to see the mocked "multiplayer"
-experience (though today only one browser tab is a "real" player — the other
-three seats are filled by mock/placeholder players so the UI can be
-demoed solo).
+experience (today only one browser tab is a "real" player — the other three
+seats are filled by mock/placeholder players driven by the same real rules
+engine, so the demo plays out with correct legal moves).
 
 To type-check and build for production:
 
@@ -48,32 +56,63 @@ To type-check and build for production:
 npm run build
 ```
 
-## Game rules status — IMPORTANT
+To run the rules-engine unit tests:
 
-The detailed Canasta rules (exact deck composition, minimum meld point
-values, canasta requirements, going-out conditions, wild card handling,
-frozen discard pile rules, and the scoring table) have **not been finalized**
-by the project owner yet. Rather than bake in guesses that would need to be
-ripped out later, this frontend uses clearly-marked **mock/placeholder game
-logic** so the UI is fully interactive and demoable right now:
+```bash
+npm run test
+```
 
-- All game-state mutations are isolated behind a single store API in
-  `src/store/gameStore.ts` (`useGameStore().actions`). Nothing else in the
-  app mutates game state directly.
-- The mock logic can deal a shuffled deck, let the local player draw, select
-  cards, discard, and "lay a meld" (currently just groups selected cards by
-  matching rank — no real validation).
-- Every place a real rule is required instead has a `TODO(rules)` or
-  `TODO(backend)` comment, especially in `src/types/game.ts`,
-  `src/lib/deck.ts`, and `src/store/gameStore.ts`.
+## Rules engine
 
-When the ruleset is finalized and a real server-authoritative engine exists,
-the intended integration path is:
+All rules logic lives in `src/engine/`, decoupled from Zustand/React so it's
+independently unit-testable (`*.test.ts` files alongside each module):
 
-1. Replace the body of the action functions in `src/store/gameStore.ts` with
-   `socket.emit(...)` calls using the client set up in `src/lib/socket.ts`.
-2. Have the server's authoritative `room:state` / `game:state` events call
-   `set(...)` in the store instead of the local mock mutations.
-3. UI components should not need to change, since they only ever read from
-   the store and call `actions.*` — they don't know or care whether the
-   state came from a mock or a real server.
+- `cardValues.ts` — card point values, rank ordering, wild-capability checks.
+- `meldValidation.ts` — building Sets & Sequences from scratch (including
+  illegal-opener rejection and the 1-wild-per-meld limit), appending cards to
+  existing melds, the Slide mechanic (relocating a displaced wild to a chosen
+  edge), the `canBecomeLimpa` flag state machine, and Canasta/Limpa/
+  Canasta-of-2s/Limpa-of-2s classification + bonus values.
+- `turnEngine.ts` — the 3-phase turn state machine: Draw (stock or Top
+  Touch), Action (meld/append), Discard, plus Top Touch validation/failure
+  penalty handling.
+- `pozzetto.ts` — the two Pozzetto (11-card reserve) trigger conditions:
+  end-of-turn claim on discard, and mid-turn "running turn" claim on
+  melding to an empty hand.
+- `showEligibility.ts` — the 3-condition Show (going-out) eligibility check.
+- `scoring.ts` — round-end scoring for both the Normal Show ending and the
+  sudden-death ending, including all bonuses/penalties from the ruleset.
+- `aiPlayer.ts` — a simple greedy planner for the mock/placeholder players
+  that reuses the exact same validation functions as human play (no
+  separate "fake" AI logic path).
+
+`src/store/gameStore.ts` is the only place that mutates room/game state on
+the client: it composes calls into `src/engine/` and calls Zustand's
+`set(...)`. When a real server-authoritative engine exists, the intended
+integration path is unchanged from before: replace the body of the action
+functions with `socket.emit(...)` calls (see `src/lib/socket.ts`), and have
+incoming server events call `set(...)` instead — UI components only ever
+read from the store and call `actions.*`, so they don't need to change.
+
+### Judgment calls made during implementation
+
+A few specific points in the ruleset required an interpretation call beyond
+the two flagged `TODO(rules)` items above; these are also called out inline
+in code comments:
+
+- A 7+ card meld with 0 current wild cards but whose `canBecomeLimpa` flag
+  has already been permanently tripped (e.g. by the "9 and 2 in the same
+  sequence" rule) is classified as a Mixed Canasta rather than a Limpa,
+  since the source ruleset doesn't specify a distinct bucket for that edge
+  case.
+- Top Touch appends that would trigger a wild-card Slide default to sliding
+  the displaced wild to the top edge automatically, since Top Touch is a
+  single atomic pickup action rather than a multi-step UI flow; the
+  mock/placeholder AI players similarly skip any append that would require a
+  Slide edge choice, to avoid needing a UI prompt for a non-human player.
+- Sudden-death detection (stock pile reaching 0) is surfaced to the human
+  player as available tools (Top Touch, melding, Declare Show) plus an
+  explicit "End Round (Sudden Death)" button they use if they determine they
+  cannot both Top Touch validly and immediately empty their hand with a
+  legal Show in that same turn, rather than the engine auto-detecting every
+  possible line of play on the player's behalf.

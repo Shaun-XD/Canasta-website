@@ -1,13 +1,23 @@
 /**
- * Core Canasta data model.
+ * Core Canasta ("Rajasthani Canasta") data model.
  *
- * IMPORTANT: The exact Canasta ruleset (deck composition beyond the basic
- * 52 + jokers, meld/canasta requirements, going-out conditions, wild card
- * handling, and scoring tables) has NOT been finalized by the product owner
- * yet. Everywhere the real rules matter, this file (and the mock store that
- * consumes it) leaves a `TODO(rules)` comment. Do not treat any validation
- * or scoring logic built on top of these types as final - it is placeholder
- * behavior only, meant to make the UI interactive/demoable.
+ * This models the full authoritative ruleset: 108-card deck (2 decks + 4
+ * jokers), 4 players in 2 fixed partnerships, 13-card hands, an 11-card
+ * "Pozzetto" reserve stack per team, Set/Sequence melds with wild-card
+ * limits, Canasta/Limpa classification & bonuses, the Slide mechanic, the
+ * 3-phase turn state machine, Top Touch pickup validation, Show/Open Show
+ * going-out conditions, sudden-death stock depletion, and round scoring.
+ *
+ * The rules engine that operates on these types lives in `src/engine/` and
+ * is intentionally decoupled from Zustand/React so it can be unit tested in
+ * isolation (see `src/engine/*.test.ts`).
+ *
+ * Two open questions remain unresolved by the source ruleset and are marked
+ * with `TODO(rules)` at their point of use:
+ *   1. The default match target score (implemented as 2100, configurable).
+ *   2. Whether the -500/-100 tournament-style penalties (wrong meld
+ *      detection, unclaimed Pozzetto, etc.) apply as specified, since they
+ *      are noted as carried over from an earlier tournament ruleset.
  */
 
 export type Suit = 'hearts' | 'diamonds' | 'clubs' | 'spades'
@@ -31,11 +41,6 @@ export type Rank =
 /**
  * A single physical card. `id` is a stable unique identifier used for React
  * keys, drag/drop, and selection tracking - it is NOT game state.
- *
- * TODO(rules): confirm whether this project uses 1 or 2 standard decks
- * (traditional Canasta uses 2 decks + 4 jokers = 108 cards). The mock deck
- * builder in `src/lib/deck.ts` currently assumes 2 decks + 4 jokers as a
- * reasonable placeholder.
  */
 export interface CardModel {
   id: string
@@ -60,61 +65,119 @@ export interface Player {
   avatarColor: string
 }
 
+// ---------------------------------------------------------------------------
+// Melds
+// ---------------------------------------------------------------------------
+
+export type MeldType = 'set' | 'sequence'
+
+/**
+ * Classification of a completed (7+ card) meld. Melds below 7 cards are
+ * always `'in-progress'` - they contribute only their raw card point total
+ * to the team's score, no bonus.
+ */
+export type MeldClassification =
+  | 'in-progress'
+  | 'mixed-canasta'
+  | 'limpa'
+  | 'mixed-canasta-2s'
+  | 'limpa-2s'
+
+/**
+ * One physical position within a meld. For a Set, `slotRank` always equals
+ * the meld's rank. For a Sequence, slots are ordered low-to-high and
+ * `slotRank` is the rank that position represents in the run (which may
+ * differ from `card.rank` when a wild card is filling that slot).
+ */
+export interface MeldSlot {
+  card: CardModel
+  slotRank: Rank
+  /**
+   * True if `card` is acting as a wild substitute for `slotRank` rather than
+   * as its own natural rank+suit. A 2 placed in its own matching-suit '2'
+   * slot of a Sequence, or a 2 that is one of the natural members of a
+   * rank-2 Set/"2s meld", is NOT a wild fill.
+   */
+  isWildFill: boolean
+}
+
+export interface Meld {
+  id: string
+  type: MeldType
+  ownerTeamId: TeamId
+  /** Set rank (including '2' for a "2s meld"); null for sequences. */
+  rank: Rank | null
+  /** Sequence suit; null for sets. */
+  suit: Suit | null
+  /** Ordered slots; low-to-high rank order for sequences. */
+  slots: MeldSlot[]
+  /** Count of cards currently acting as wild substitutes (max 1, enforced). */
+  wildCount: number
+  /**
+   * Permanently flips false (never true again) once any Limpa-disqualifying
+   * event occurs (see engine/meldValidation.ts). Gates whether a meld with
+   * zero current wild cards may be classified as a Limpa once it reaches 7
+   * cards.
+   */
+  canBecomeLimpa: boolean
+  classification: MeldClassification
+  isCanasta: boolean // slots.length >= 7
+}
+
+export function meldCardCount(meld: Meld): number {
+  return meld.slots.length
+}
+
+export function meldCards(meld: Meld): CardModel[] {
+  return meld.slots.map((s) => s.card)
+}
+
+// ---------------------------------------------------------------------------
+// Pozzetto (reserve stack)
+// ---------------------------------------------------------------------------
+
+export interface PozzettoState {
+  /** True once the 11-card stack has been moved into a player's hand. */
+  claimed: boolean
+  claimedByPlayerId: PlayerId | null
+  /**
+   * True once the team has discarded at least 1 card from the
+   * reserve-augmented hand, or the team has called Show.
+   */
+  activated: boolean
+}
+
 export interface Team {
   id: TeamId
   name: string
   playerIds: PlayerId[]
-  /**
-   * Melds this team has laid down on the table, keyed by rank.
-   * TODO(rules): a real engine will also need per-meld metadata such as
-   * "is this a natural/mixed canasta", wild-card counts, and whether it is
-   * closed/frozen etc. For now a meld is just "a pile of cards of one rank".
-   */
-  melds: Record<string, Meld>
-  /**
-   * TODO(rules): red-three bonus/penalty cards, once finalized.
-   */
-  redThrees: CardModel[]
+  melds: Meld[]
   score: number
   hasGoneOut: boolean
-}
-
-export interface Meld {
-  rank: Rank
-  cards: CardModel[]
-  /**
-   * TODO(rules): a real engine determines canasta status (7+ cards, natural
-   * vs mixed, closed vs open) from finalized rules. The mock store just
-   * flags `isCanasta` once a meld reaches 7 cards as a placeholder visual cue.
-   */
-  isCanasta: boolean
+  pozzetto: PozzettoState
 }
 
 /** A player's hand of cards currently held (not yet melded or discarded). */
 export type Hand = CardModel[]
 
-/**
- * The "foot" is the second stack of cards dealt to each player in Canasta,
- * picked up only after the first hand (the "head") is fully melded/emptied.
- * TODO(rules): exact foot size and pick-up trigger conditions pending.
- */
-export type Foot = CardModel[]
-
 export interface DiscardPile {
   cards: CardModel[]
-  /**
-   * TODO(rules): "frozen" discard piles (e.g. after a wild card is
-   * discarded) affect who may pick up the pile. Not implemented yet.
-   */
-  isFrozen: boolean
 }
 
-export type TurnPhase = 'draw' | 'meld' | 'discard'
+export type TurnPhase = 'draw' | 'action' | 'discard'
 
 export interface TurnState {
   activePlayerId: PlayerId
   phase: TurnPhase
   turnNumber: number
+  /** True once the player has drawn from stock or taken the discard pile this turn. */
+  hasDrawnThisTurn: boolean
+  /** Epoch ms timestamp of when this turn started, used to drive the per-player turn timer countdown. */
+  startedAt: number
+  /** True while the turn timer is paused for everyone at the table (item: pause button). */
+  isPaused: boolean
+  /** Epoch ms timestamp of when the timer was paused; null while not paused. */
+  pausedAt: number | null
 }
 
 export type RoomStatus = 'lobby' | 'in-progress' | 'round-end' | 'game-end'
@@ -126,6 +189,67 @@ export interface RoomState {
   players: Player[]
   teams: Team[]
   hostPlayerId: PlayerId | null
+  /**
+   * Configurable match target score, set by the host at room-creation time.
+   * TODO(rules): 2100 is used as the default. The source ruleset does not
+   * specify a final target score - confirm this default with the product
+   * owner and adjust if needed.
+   */
+  matchTargetScore: number
+  /**
+   * Per-player turn timer, in seconds, configured by the host at
+   * room-creation time (or adjusted in the lobby before the game starts).
+   * Applies uniformly to every player's turn for the session.
+   */
+  turnTimerSeconds: number
+}
+
+/** A pending "choose which edge the displaced wild slides to" UI prompt. */
+export interface PendingSlide {
+  teamId: TeamId
+  meldId: string
+  displacedWildCardId: string
+}
+
+/** Outcome of a failed Top Touch attempt, surfaced to the UI briefly. */
+export interface TopTouchFailure {
+  playerId: PlayerId
+  teamId: TeamId
+  penaltyPoints: number
+}
+
+export type RoundEndingType = 'show' | 'sudden-death'
+
+export interface TeamRoundScore {
+  teamId: TeamId
+  meldPoints: number
+  canastaBonuses: number
+  opponentHandPenalty: number
+  showBonus: number
+  zeroCanastaPenalty: number
+  unclaimedPozzettoPenalty: number
+  wrongMeldPenalty: number
+  total: number
+}
+
+export interface RoundScoreResult {
+  round: number
+  endingType: RoundEndingType
+  showingTeamId: TeamId | null
+  teams: Record<TeamId, TeamRoundScore>
+}
+
+/**
+ * Records the most recent batch of cards a player acquired into their hand
+ * (drawn from stock, or picked up via a successful Top Touch / Pozzetto
+ * claim), so the UI can show a temporary "new card" glow highlight (see
+ * `AnimatedCard`). `at` is an epoch-ms timestamp; consumers should treat the
+ * highlight as expired after ~2s.
+ */
+export interface AcquiredCardsEvent {
+  playerId: PlayerId
+  cardIds: string[]
+  at: number
 }
 
 /** Full game-table state once a round is underway. */
@@ -134,16 +258,17 @@ export interface GameState {
   stock: CardModel[]
   discardPile: DiscardPile
   hands: Record<PlayerId, Hand>
-  feet: Record<PlayerId, Foot>
-  hasPickedUpFoot: Record<PlayerId, boolean>
+  /** The 11-card reserve per team, present until claimed (see PozzettoState.claimed). */
+  pozzettoStacks: Record<TeamId, CardModel[]>
   turn: TurnState
   round: number
-  /**
-   * TODO(rules): score breakdown per team is a placeholder shape until the
-   * real scoring formula (melded card points, canasta bonuses, going-out
-   * bonus, red three bonus/penalty, cards left in hand penalty) is defined.
-   */
-  lastRoundScores: Record<TeamId, number> | null
+  roundScoresHistory: RoundScoreResult[]
+  lastRoundScores: RoundScoreResult | null
+  pendingSlide: PendingSlide | null
+  lastTopTouchFailure: TopTouchFailure | null
+  gameOverTeamId: TeamId | null
+  /** Most recent card(s) added to a player's hand; drives the "new card" glow highlight. */
+  lastAcquired: AcquiredCardsEvent | null
 }
 
 export const SUITS: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades']
@@ -172,3 +297,6 @@ export const SUIT_SYMBOLS: Record<Suit, string> = {
 }
 
 export const RED_SUITS: Suit[] = ['hearts', 'diamonds']
+
+export const DEFAULT_TARGET_SCORE = 2100
+export const DEFAULT_TURN_TIMER_SECONDS = 60

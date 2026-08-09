@@ -1,43 +1,80 @@
-import type { Team, TeamId } from '../types/game'
+import type { RoundScoreResult, Team } from '../types/game'
 
-/**
- * Round/game end overlay.
- * TODO(rules): score breakdown is a flat placeholder number per team until
- * the real scoring formula is finalized (melded points, canasta bonuses,
- * going-out bonus, red three bonus/penalty, unmelded card penalty, etc).
- */
+function ScoreLine({ label, value }: { label: string; value: number }) {
+  if (value === 0) return null
+  return (
+    <div className="flex items-center justify-between text-xs text-white/70">
+      <span>{label}</span>
+      <span className={value < 0 ? 'text-red-300' : 'text-emerald-300'}>
+        {value > 0 ? '+' : ''}
+        {value}
+      </span>
+    </div>
+  )
+}
+
 export function RoundEndModal({
   teams,
   scores,
+  matchTargetScore,
+  gameOverTeamId,
   onNextRound,
   onReturnToLobby,
 }: {
   teams: Team[]
-  scores: Record<TeamId, number> | null
+  scores: RoundScoreResult | null
+  matchTargetScore: number
+  gameOverTeamId: string | null
   onNextRound: () => void
   onReturnToLobby: () => void
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-emerald-950 p-6 shadow-2xl">
-        <h2 className="text-center text-2xl font-bold text-white">Round Complete</h2>
+      <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-emerald-950 p-6 shadow-2xl">
+        <h2 className="text-center text-2xl font-bold text-white">
+          {gameOverTeamId ? 'Match Complete!' : 'Round Complete'}
+        </h2>
         <p className="mt-1 text-center text-sm text-white/60">
-          Placeholder scoring — real rules pending finalization.
+          {scores?.endingType === 'sudden-death'
+            ? 'Stock depleted — sudden death ending (hands not scored).'
+            : `${scores?.showingTeamId ? teams.find((t) => t.id === scores.showingTeamId)?.name : 'A team'} declared Show.`}
         </p>
 
         <div className="mt-5 space-y-3">
-          {teams.map((team) => (
-            <div
-              key={team.id}
-              className="flex items-center justify-between rounded-lg bg-white/5 px-4 py-3"
-            >
-              <span className="font-medium text-white">{team.name}</span>
-              <span className="text-xl font-bold text-yellow-300">
-                {scores?.[team.id] ?? 0}
-              </span>
-            </div>
-          ))}
+          {teams.map((team) => {
+            const breakdown = scores?.teams[team.id]
+            return (
+              <div key={team.id} className="rounded-lg bg-white/5 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-white">{team.name}</span>
+                  <span className="text-xl font-bold text-yellow-300">{team.score}</span>
+                </div>
+                {breakdown && (
+                  <div className="mt-2 space-y-1 border-t border-white/10 pt-2">
+                    <ScoreLine label="Meld card points" value={breakdown.meldPoints} />
+                    <ScoreLine label="Canasta/Limpa bonuses" value={breakdown.canastaBonuses} />
+                    <ScoreLine label="Opponent hand penalty (to you)" value={breakdown.opponentHandPenalty} />
+                    <ScoreLine label="Show bonus" value={breakdown.showBonus} />
+                    <ScoreLine label="Zero Canasta penalty" value={breakdown.zeroCanastaPenalty} />
+                    <ScoreLine label="Unclaimed Pozzetto penalty" value={breakdown.unclaimedPozzettoPenalty} />
+                    <ScoreLine label="Wrong meld penalty" value={breakdown.wrongMeldPenalty} />
+                    <div className="flex items-center justify-between pt-1 text-xs font-semibold text-white/80">
+                      <span>Round total</span>
+                      <span>
+                        {breakdown.total > 0 ? '+' : ''}
+                        {breakdown.total}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
+
+        <p className="mt-4 text-center text-[11px] text-white/40">
+          First team to {matchTargetScore} points wins the match.
+        </p>
 
         <div className="mt-6 flex gap-3">
           <button
@@ -52,7 +89,7 @@ export function RoundEndModal({
             onClick={onNextRound}
             className="flex-1 rounded-lg bg-yellow-400 px-4 py-2 font-semibold text-emerald-950 transition hover:bg-yellow-300"
           >
-            Next Round
+            {gameOverTeamId ? 'Back to Lobby' : 'Next Round'}
           </button>
         </div>
       </div>

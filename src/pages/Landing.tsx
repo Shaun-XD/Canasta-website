@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import { Card } from '../components/Card'
+import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS } from '../types/game'
 
 export function Landing() {
   const navigate = useNavigate()
@@ -12,13 +13,21 @@ export function Landing() {
   const [joinCode, setJoinCode] = useState('')
   const [mode, setMode] = useState<'create' | 'join'>('create')
   const [error, setError] = useState('')
+  const [targetScore, setTargetScore] = useState(String(DEFAULT_TARGET_SCORE))
+  const [turnTimerSeconds, setTurnTimerSeconds] = useState(String(DEFAULT_TURN_TIMER_SECONDS))
 
   function handleCreate() {
     if (!name.trim()) {
       setError('Enter your name first.')
       return
     }
-    const roomId = createRoom(name.trim())
+    const parsedTarget = Number(targetScore)
+    const parsedTimer = Number(turnTimerSeconds)
+    const roomId = createRoom(
+      name.trim(),
+      Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : DEFAULT_TARGET_SCORE,
+      Number.isFinite(parsedTimer) && parsedTimer >= 10 ? parsedTimer : DEFAULT_TURN_TIMER_SECONDS,
+    )
     navigate(`/lobby/${roomId}`)
   }
 
@@ -86,6 +95,38 @@ export function Landing() {
           </button>
         </div>
 
+        {mode === 'create' && (
+          <div className="mb-4">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-white/60">
+              Match target score
+            </label>
+            <input
+              type="number"
+              min={500}
+              step={100}
+              value={targetScore}
+              onChange={(e) => setTargetScore(e.target.value)}
+              className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-white placeholder-white/40 outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300"
+            />
+            <p className="mt-1 text-[11px] text-white/40">Default {DEFAULT_TARGET_SCORE}. First team to reach this wins the match.</p>
+
+            <label className="mb-1 mt-4 block text-xs font-semibold uppercase tracking-wide text-white/60">
+              Turn timer (seconds)
+            </label>
+            <input
+              type="number"
+              min={10}
+              step={5}
+              value={turnTimerSeconds}
+              onChange={(e) => setTurnTimerSeconds(e.target.value)}
+              className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-white placeholder-white/40 outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300"
+            />
+            <p className="mt-1 text-[11px] text-white/40">
+              Default {DEFAULT_TURN_TIMER_SECONDS}s. Applies to every player; a turn auto-ends if it runs out.
+            </p>
+          </div>
+        )}
+
         {mode === 'join' && (
           <input
             value={joinCode}
@@ -111,8 +152,8 @@ export function Landing() {
       </div>
 
       <p className="mt-8 max-w-md text-center text-xs text-white/40">
-        Frontend demo build — game rules (melds, canastas, scoring) are placeholder
-        logic pending final ruleset. See README for details.
+        Full Rajasthani Canasta rules engine — Sets & Sequences, wild-card limits, the
+        Slide, Pozzetto, and Show. See README for details.
       </p>
     </div>
   )

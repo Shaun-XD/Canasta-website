@@ -9,7 +9,7 @@ export function Lobby() {
   const navigate = useNavigate()
   const room = useGameStore((s) => s.room)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
-  const { toggleReady, setLocalTeam, startGame } = useGameStore((s) => s.actions)
+  const { toggleReady, setLocalTeam, startGame, setTurnTimerSeconds } = useGameStore((s) => s.actions)
 
   useEffect(() => {
     if (room?.status === 'in-progress' && room.roomId === roomId) {
@@ -37,6 +37,26 @@ export function Lobby() {
           </span>
           <div className="rounded-xl border border-white/15 bg-black/30 px-6 py-3 text-3xl font-black tracking-[0.3em] text-yellow-300 shadow-lg">
             {room.roomId}
+          </div>
+          <span className="text-xs font-medium text-white/50">
+            Match target score: <span className="text-white/80">{room.matchTargetScore}</span>
+          </span>
+
+          <div className="mt-2 flex items-center gap-2 text-xs font-medium text-white/50">
+            <span>Turn timer:</span>
+            {localPlayer?.id === room.hostPlayerId ? (
+              <input
+                type="number"
+                min={10}
+                step={5}
+                value={room.turnTimerSeconds}
+                onChange={(e) => setTurnTimerSeconds(Number(e.target.value))}
+                className="w-20 rounded-md border border-white/15 bg-white/10 px-2 py-1 text-center text-white outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300"
+              />
+            ) : (
+              <span className="text-white/80">{room.turnTimerSeconds}</span>
+            )}
+            <span>seconds per turn</span>
           </div>
         </div>
 
