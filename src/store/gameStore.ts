@@ -1358,7 +1358,11 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         hasGoneOut: false,
         pozzetto: initialPozzettoState(),
       }))
-      const players = room.players.map((p) => ({ ...p, isReady: false }))
+      const players = room.players.map((p) => ({
+        ...p,
+        // Bots stay auto-ready; humans must opt in again for the next start.
+        isReady: !!p.isMock,
+      }))
       set({
         room: { ...room, teams, players, status: 'lobby' },
         game: null,

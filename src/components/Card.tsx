@@ -32,31 +32,53 @@ export interface CardProps {
 const CARD_W = 100
 const CARD_H = 140
 
-// Normalized (0-1) pip positions for number cards, using the classic
-// playing-card layout convention. Positions are mirrored top/bottom via a
-// 180deg rotation for a natural look.
+// Normalized (0-1) pip positions — kept tight around the center so they
+// don't collide with the large corner indexes and read as one cluster.
 const PIP_LAYOUTS: Record<number, [number, number][]> = {
   1: [[0.5, 0.5]],
-  2: [[0.5, 0.22], [0.5, 0.78]],
-  3: [[0.5, 0.22], [0.5, 0.5], [0.5, 0.78]],
-  4: [[0.3, 0.22], [0.7, 0.22], [0.3, 0.78], [0.7, 0.78]],
-  5: [[0.3, 0.22], [0.7, 0.22], [0.5, 0.5], [0.3, 0.78], [0.7, 0.78]],
-  6: [[0.3, 0.22], [0.7, 0.22], [0.3, 0.5], [0.7, 0.5], [0.3, 0.78], [0.7, 0.78]],
+  2: [[0.5, 0.38], [0.5, 0.62]],
+  3: [[0.5, 0.36], [0.5, 0.5], [0.5, 0.64]],
+  4: [
+    [0.38, 0.36], [0.62, 0.36],
+    [0.38, 0.64], [0.62, 0.64],
+  ],
+  5: [
+    [0.38, 0.36], [0.62, 0.36],
+    [0.5, 0.5],
+    [0.38, 0.64], [0.62, 0.64],
+  ],
+  6: [
+    [0.38, 0.34], [0.62, 0.34],
+    [0.38, 0.5], [0.62, 0.5],
+    [0.38, 0.66], [0.62, 0.66],
+  ],
   7: [
-    [0.3, 0.22], [0.7, 0.22], [0.5, 0.36], [0.3, 0.5], [0.7, 0.5],
-    [0.3, 0.78], [0.7, 0.78],
+    [0.38, 0.32], [0.62, 0.32],
+    [0.5, 0.42],
+    [0.38, 0.5], [0.62, 0.5],
+    [0.38, 0.68], [0.62, 0.68],
   ],
   8: [
-    [0.3, 0.2], [0.7, 0.2], [0.5, 0.36], [0.3, 0.5], [0.7, 0.5],
-    [0.5, 0.64], [0.3, 0.8], [0.7, 0.8],
+    [0.38, 0.3], [0.62, 0.3],
+    [0.5, 0.4],
+    [0.38, 0.5], [0.62, 0.5],
+    [0.5, 0.6],
+    [0.38, 0.7], [0.62, 0.7],
   ],
   9: [
-    [0.3, 0.18], [0.7, 0.18], [0.3, 0.4], [0.7, 0.4], [0.5, 0.5],
-    [0.3, 0.6], [0.7, 0.6], [0.3, 0.82], [0.7, 0.82],
+    [0.38, 0.3], [0.62, 0.3],
+    [0.38, 0.42], [0.62, 0.42],
+    [0.5, 0.5],
+    [0.38, 0.58], [0.62, 0.58],
+    [0.38, 0.7], [0.62, 0.7],
   ],
   10: [
-    [0.3, 0.16], [0.7, 0.16], [0.5, 0.28], [0.3, 0.4], [0.7, 0.4],
-    [0.3, 0.6], [0.7, 0.6], [0.5, 0.72], [0.3, 0.84], [0.7, 0.84],
+    [0.38, 0.28], [0.62, 0.28],
+    [0.5, 0.36],
+    [0.38, 0.44], [0.62, 0.44],
+    [0.38, 0.56], [0.62, 0.56],
+    [0.5, 0.64],
+    [0.38, 0.72], [0.62, 0.72],
   ],
 }
 
@@ -149,20 +171,19 @@ function CornerLabel({
   x,
   y,
   rotate,
-  size = 'lg',
 }: {
   rank: Rank
   suit: Suit
   x: number
   y: number
   rotate?: boolean
-  size?: 'lg' | 'sm'
 }) {
   const color = RED_SUITS.includes(suit) ? '#dc2626' : '#111827'
   const isTen = rank === '10'
-  const rankSize = size === 'lg' ? (isTen ? 26 : 32) : isTen ? 12 : 14
-  const suitSize = size === 'lg' ? 26 : 13
-  const suitGap = size === 'lg' ? (isTen ? 26 : 30) : 13
+  // Both corners use the same large index — bottom-right is just rotated 180°.
+  const rankSize = isTen ? 24 : 30
+  const suitSize = 34
+  const suitGap = isTen ? 28 : 32
 
   return (
     <g transform={rotate ? `rotate(180 ${x} ${y})` : undefined}>
@@ -193,70 +214,80 @@ function CornerLabel({
   )
 }
 
-const CORNER_X = 22
-const CORNER_Y = 34
+const CORNER_X = 20
+const CORNER_Y = 30
 
 function NumberFace({ rank, suit }: { rank: Rank; suit: Suit }) {
   const count = rankToPipCount(rank)
   const color = RED_SUITS.includes(suit) ? '#dc2626' : '#111827'
   const layout = count ? PIP_LAYOUTS[count] : null
+  const isAceLike = count === 1
+  const cx = CARD_W / 2
+  const cy = CARD_H / 2
 
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width="100%" height="100%">
       <rect width={CARD_W} height={CARD_H} rx="8" fill="#ffffff" stroke="#1f2937" strokeWidth="1.5" />
-      <CornerLabel rank={rank} suit={suit} x={CORNER_X} y={CORNER_Y} size="lg" />
-      <CornerLabel rank={rank} suit={suit} x={CARD_W - CORNER_X} y={CARD_H - CORNER_Y} rotate size="sm" />
-      {layout?.map(([fx, fy], i) => {
-        // Nudge center pips slightly right/down so they clear the large TL index
-        const px = fx * CARD_W + (fx < 0.45 ? 6 : 0)
-        const py = fy * CARD_H + (fy < 0.4 ? 10 : 0)
-        return (
-          <text
-            key={i}
-            x={px}
-            y={py + 5}
-            textAnchor="middle"
-            fontSize="16"
-            fill={color}
-            opacity="0.92"
-            transform={fy > 0.5 ? `rotate(180 ${px} ${py})` : undefined}
-          >
-            {SUIT_SYMBOLS[suit]}
-          </text>
-        )
-      })}
+      <CornerLabel rank={rank} suit={suit} x={CORNER_X} y={CORNER_Y} />
+      <CornerLabel rank={rank} suit={suit} x={CARD_W - CORNER_X} y={CARD_H - CORNER_Y} rotate />
+      {isAceLike ? (
+        <text
+          x={cx}
+          y={cy}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize="36"
+          fill={color}
+          opacity="0.88"
+        >
+          {SUIT_SYMBOLS[suit]}
+        </text>
+      ) : (
+        layout?.map(([fx, fy], i) => {
+          const px = fx * CARD_W
+          const py = fy * CARD_H
+          return (
+            <text
+              key={i}
+              x={px}
+              y={py}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize="22"
+              fill={color}
+              opacity="0.9"
+              transform={fy > 0.5 ? `rotate(180 ${px} ${py})` : undefined}
+            >
+              {SUIT_SYMBOLS[suit]}
+            </text>
+          )
+        })
+      )}
     </svg>
   )
 }
 
+/** J/Q/K — corner indexes only + one true-centered suit (no extra middle rank letter). */
 function FaceCard({ rank, suit }: { rank: 'J' | 'Q' | 'K'; suit: Suit }) {
   const color = RED_SUITS.includes(suit) ? '#dc2626' : '#111827'
-  // Ornament sits to the right so the oversized TL index stays unobstructed
-  const ornamentX = CARD_W / 2 + 12
-  const ornamentY = CARD_H / 2 + 4
+  const cx = CARD_W / 2
+  const cy = CARD_H / 2
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width="100%" height="100%">
       <rect width={CARD_W} height={CARD_H} rx="8" fill="#ffffff" stroke="#1f2937" strokeWidth="1.5" />
-      <CornerLabel rank={rank} suit={suit} x={CORNER_X} y={CORNER_Y} size="lg" />
-      <CornerLabel rank={rank} suit={suit} x={CARD_W - CORNER_X} y={CARD_H - CORNER_Y} rotate size="sm" />
-      <rect
-        x="42"
-        y="36"
-        width={CARD_W - 50}
-        height={CARD_H - 72}
-        rx="6"
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        opacity="0.45"
-      />
-      <g transform={`translate(${ornamentX}, ${ornamentY})`}>
-        <circle r="18" fill={color} opacity="0.1" />
-        <path d="M -12 7 L -12 -9 L -6 -2 L 0 -14 L 6 -2 L 12 -9 L 12 7 Z" fill={color} opacity="0.85" />
-        <text y="5" textAnchor="middle" fontSize="16" fontWeight="700" fill={color} fontFamily="Georgia, serif">
-          {rank}
-        </text>
-      </g>
+      <CornerLabel rank={rank} suit={suit} x={CORNER_X} y={CORNER_Y} />
+      <CornerLabel rank={rank} suit={suit} x={CARD_W - CORNER_X} y={CARD_H - CORNER_Y} rotate />
+      <text
+        x={cx}
+        y={cy}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize="40"
+        fill={color}
+        opacity="0.88"
+      >
+        {SUIT_SYMBOLS[suit]}
+      </text>
     </svg>
   )
 }

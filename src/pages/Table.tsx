@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import { PlayerAvatar } from '../components/PlayerAvatar'
@@ -16,6 +16,21 @@ import { seedFlipOrigin } from '../hooks/useCardFlip'
 import { useHandReorder } from '../hooks/useHandReorder'
 import { evaluateShowEligibility, unmetShowConditions } from '../engine/showEligibility'
 import type { Player, Team } from '../types/game'
+
+const HAND_CARD_WIDTH = 78
+/** Deal size — spacing is calibrated so 13 cards define the squeeze baseline. */
+const HAND_BASE_COUNT = 13
+/** Visible strip per card at a full 13-card hand. */
+const HAND_COMFORT_PEEK = 48
+/** Floor when squeezing hands larger than 13 into the 13-card width. */
+const HAND_MIN_PEEK = 12
+/** Fixed rail for >13 squeeze = one full 13-card comfort fan. */
+const HAND_REF_WIDTH = HAND_CARD_WIDTH + (HAND_BASE_COUNT - 1) * HAND_COMFORT_PEEK
+/**
+ * Max fan width when holding fewer than 13 (spread multiplier can grow the fan).
+ * Caps how far apart cards get so a 2–3 card hand doesn't span the whole screen.
+ */
+const HAND_MAX_FAN_WIDTH = HAND_CARD_WIDTH + (HAND_BASE_COUNT - 1) * Math.round(HAND_COMFORT_PEEK * 1.5)
 
 export function Table() {
   const { roomId } = useParams()
@@ -53,15 +68,32 @@ export function Table() {
   // for the drawn card's id so the FLIP animation in `AnimatedCard` picks it
   // up as the origin once that card renders inside the hand.
   const stockRef = useRef<HTMLButtonElement>(null)
+  const handRailRef = useRef<HTMLDivElement>(null)
+  const [handRailWidth, setHandRailWidth] = useState(HAND_MAX_FAN_WIDTH)
+  const [hoveredHandId, setHoveredHandId] = useState<string | null>(null)
+  /** Sync lock so pointerenter during reorder doesn't enlarge neighbor cards before React state catches up. */
+  const isReorderingRef = useRef(false)
 
   // Item 7: shake + red flash + haptic feedback for blocked/illegal actions.
   const [feedback, setFeedback] = useState<{ message: string; token: number } | null>(null)
   const prevStoreErrorRef = useRef<string | null>(null)
+  const feedbackClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function reportInvalidAction(message: string) {
+    if (feedbackClearRef.current) clearTimeout(feedbackClearRef.current)
     setFeedback({ message, token: Date.now() })
     if ('vibrate' in navigator) navigator.vibrate(120)
+    feedbackClearRef.current = setTimeout(() => {
+      setFeedback(null)
+      feedbackClearRef.current = null
+    }, 3200)
   }
+
+  useEffect(() => {
+    return () => {
+      if (feedbackClearRef.current) clearTimeout(feedbackClearRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (lastActionError && lastActionError !== prevStoreErrorRef.current) {
@@ -70,7 +102,24 @@ export function Table() {
     prevStoreErrorRef.current = lastActionError
   }, [lastActionError])
 
-  // Item 6: exactly 3 players in a top row, local player's teammate centered.
+  useLayoutEffect(() => {
+    const el = handRailRef.current
+    if (!el) return
+    const measure = () => {
+      // Measure the full-width parent, not the fan itself — otherwise a
+      // shrink-wrapped rail and the peek math fight each other into a tiny hand.
+      const parent = el.parentElement
+      const raw = parent?.clientWidth ?? el.clientWidth
+      setHandRailWidth(Math.max(HAND_REF_WIDTH, raw - 16))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    if (el.parentElement) ro.observe(el.parentElement)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // Classic table seats: teammate North, opponents West/East (clockwise from local).
   const seating = useMemo(() => {
     if (!room || !localPlayerId) return null
     const localPlayer = room.players.find((p) => p.id === localPlayerId)
@@ -82,11 +131,11 @@ export function Table() {
     const teammate = restClockwise.find((p) => p.teamId === localPlayer.teamId)
     const opponents = restClockwise.filter((p) => p.id !== teammate?.id)
     return {
-      bottom: localPlayer,
-      teammate,
-      topLeft: opponents[0],
-      topRight: opponents[1],
-    } as { bottom: Player; teammate?: Player; topLeft?: Player; topRight?: Player }
+      south: localPlayer,
+      north: teammate,
+      west: opponents[0],
+      east: opponents[1],
+    } as { south: Player; north?: Player; west?: Player; east?: Player }
   }, [room, localPlayerId])
 
   // Item 2: per-player turn countdown, driven off the current turn's start time.
@@ -122,11 +171,15 @@ export function Table() {
   const { order: handOrder, draggingId, handlePointerDown: handleCardPointerDown, handlePointerEnter: handleCardPointerEnter } =
     useHandReorder(rawLocalHand.map((c) => c.id))
 
+  useEffect(() => {
+    if (draggingId == null) isReorderingRef.current = false
+  }, [draggingId])
+
   if (!room || room.roomId !== roomId) return <Navigate to="/" replace />
   if (room.status === 'lobby') return <Navigate to={`/lobby/${roomId}`} replace />
   if (!game || !seating) {
     return (
-      <div className="felt-bg flex min-h-screen items-center justify-center text-white/70">
+      <div className="felt-bg table-shell flex items-center justify-center text-white/70">
         Setting up table…
       </div>
     )
@@ -164,13 +217,6 @@ export function Table() {
     )
   }
 
-  // Item 3 & 5: a single unified "Meld" action. When a Top Touch is in
-  // progress it combines the top discard card with the current selection;
-  // otherwise it works purely from the hand-card selection + optional
-  // targeted meld group. All the legality/auto-detection logic (new Set vs
-  // Sequence vs append, including the wild-swap case) lives in the store /
-  // engine - this just guards on turn/phase and lets the store report any
-  // failure via `lastActionError` (already wired to the shake/haptic effect).
   function handleMeld() {
     if (topTouchInProgress) {
       if (selectedCardIds.length === 0 && !selectedMeldId) {
@@ -190,30 +236,61 @@ export function Table() {
     beginTopTouch()
   }
 
+  const teamRed = room.teams.find((t) => t.id === 'team-a') ?? room.teams[0]
+  const teamBlue = room.teams.find((t) => t.id === 'team-b') ?? room.teams[1]
+
+  // ≤13: fewer cards → larger peek (spreadMult = 13/count). >13: squeeze into
+  // the same width a 13-card comfort fan uses.
+  const handCount = orderedLocalHand.length
+  const handPeek = (() => {
+    if (handCount <= 1) return HAND_CARD_WIDTH
+    if (handCount <= HAND_BASE_COUNT) {
+      const spreadMult = HAND_BASE_COUNT / handCount
+      // Wider base + multiplier so a short hand fans out clearly.
+      const desiredPeek = Math.min(HAND_CARD_WIDTH - 4, Math.round(HAND_COMFORT_PEEK * spreadMult))
+      const desiredWidth = HAND_CARD_WIDTH + (handCount - 1) * desiredPeek
+      // Only compress if the real viewport is narrower than that fan.
+      const room = Math.max(handRailWidth, HAND_REF_WIDTH)
+      const fitWidth = Math.min(desiredWidth, room, HAND_MAX_FAN_WIDTH)
+      if (fitWidth >= desiredWidth - 1) return desiredPeek
+      return Math.max(HAND_COMFORT_PEEK, (fitWidth - HAND_CARD_WIDTH) / (handCount - 1))
+    }
+    const fitWidth = Math.min(HAND_REF_WIDTH, handRailWidth)
+    return Math.max(HAND_MIN_PEEK, (fitWidth - HAND_CARD_WIDTH) / (handCount - 1))
+  })()
+  const handOverlap = HAND_CARD_WIDTH - handPeek
+  const handFanWidth =
+    handCount <= 1 ? HAND_CARD_WIDTH : HAND_CARD_WIDTH + (handCount - 1) * handPeek
+
   return (
-    <div className="felt-bg relative flex min-h-screen flex-col text-white">
-      <header className="flex items-center justify-between px-4 py-2 text-xs text-white/50">
-        <span>Room {room.roomId}</span>
-        <div className="flex items-center gap-2 sm:gap-3">
-          <span className="hidden sm:inline">
-            Round {game.round} · Target {room.matchTargetScore} · Turn timer {room.turnTimerSeconds}s
+    <div className="felt-bg table-shell relative flex flex-col text-white">
+      <header className="table-topbar shrink-0">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold tracking-wide text-white/90">
+            Room <span className="font-mono text-yellow-300">{room.roomId}</span>
+          </p>
+          <p className="mt-0.5 truncate text-[11px] text-white/45 sm:hidden">
+            R{game.round} · {room.matchTargetScore} pts · {room.turnTimerSeconds}s
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <span className="hidden rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-white/55 ring-1 ring-white/10 sm:inline">
+            Round {game.round} · Target {room.matchTargetScore} · {room.turnTimerSeconds}s
           </span>
           <button
             type="button"
             onClick={togglePauseTimer}
-            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-              isPaused
-                ? 'bg-yellow-400 text-emerald-950 hover:bg-yellow-300'
-                : 'bg-white/10 text-white/70 hover:bg-white/20'
+            className={`action-btn action-btn-ghost !min-h-9 !min-w-0 !px-3 !py-1.5 !text-[11px] ${
+              isPaused ? '!bg-yellow-400 !text-emerald-950' : ''
             }`}
             title={isPaused ? 'Resume the turn timer for everyone' : 'Pause the turn timer for everyone'}
           >
-            {isPaused ? '▶ Resume' : '⏸ Pause'}
+            {isPaused ? 'Resume' : 'Pause'}
           </button>
           <button
             type="button"
             onClick={exitToHome}
-            className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/80 transition hover:bg-red-500/30 hover:text-white"
+            className="action-btn action-btn-danger !min-h-9 !min-w-0 !px-3 !py-1.5 !text-[11px]"
             title="Exit to home — ends the game and clears session state"
           >
             Exit
@@ -221,96 +298,124 @@ export function Table() {
         </div>
       </header>
 
-      <div className="grid flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-3 px-4 pb-4">
-        {/* Top row: exactly 3 players, teammate centered (item 6) */}
-        <div className="grid grid-cols-3 items-start gap-2">
-          <div className="flex justify-start">
-            {seating.topLeft && (
-              <OpponentBadge
-                player={seating.topLeft}
-                cardCount={game.hands[seating.topLeft.id]?.length ?? 0}
-                isActive={game.turn.activePlayerId === seating.topLeft.id}
+      <div className="mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
+        {/* NORTH — teammate */}
+        <div className="flex shrink-0 justify-center">
+          {seating.north && (
+            <SidePlayer
+              player={seating.north}
+              cardCount={game.hands[seating.north.id]?.length ?? 0}
+              isActive={game.turn.activePlayerId === seating.north.id}
+              remainingSeconds={remainingSeconds}
+              isPaused={isPaused}
+              highlight
+              roleLabel="Teammate"
+              stackOrientation="horizontal"
+            />
+          )}
+        </div>
+
+        {/* WEST | MELDS (grow) | EAST — melds own the vertical space */}
+        <div className="melds-row flex min-h-0 flex-[1_1_0] items-stretch gap-1.5 sm:gap-2">
+          <div className="flex w-[3.75rem] shrink-0 flex-col items-center justify-center sm:w-[5.75rem]">
+            {seating.west && (
+              <SidePlayer
+                player={seating.west}
+                cardCount={game.hands[seating.west.id]?.length ?? 0}
+                isActive={game.turn.activePlayerId === seating.west.id}
                 remainingSeconds={remainingSeconds}
                 isPaused={isPaused}
+                roleLabel="Opponent"
+                stackOrientation="side"
+                compact
               />
             )}
           </div>
-          <div className="flex justify-center">
-            {seating.teammate && (
-              <OpponentBadge
-                player={seating.teammate}
-                cardCount={game.hands[seating.teammate.id]?.length ?? 0}
-                isActive={game.turn.activePlayerId === seating.teammate.id}
+
+          <section className="melds-grid min-h-0 w-full flex-1" aria-label="Team melds">
+            {[teamRed, teamBlue].filter(Boolean).map((team) => {
+              const isRed = team.id === 'team-a'
+              return (
+                <div
+                  key={team.id}
+                  className={`felt-panel flex h-full min-h-0 flex-col gap-1 overflow-hidden p-1.5 sm:p-2.5 ${
+                    isRed ? 'felt-panel-red' : 'felt-panel-blue'
+                  }`}
+                >
+                  <div className="flex shrink-0 items-center justify-between gap-2 px-0.5">
+                    <span className={`text-xs font-bold tracking-wide ${isRed ? 'text-red-200/90' : 'text-sky-200/90'}`}>
+                      {team.name}
+                    </span>
+                    <span className="text-[10px] text-white/40">
+                      {team.melds.length === 0 ? 'Empty' : `${team.melds.length} meld${team.melds.length === 1 ? '' : 's'}`}
+                    </span>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    <MeldArea
+                      team={team}
+                      align={isRed ? 'left' : 'right'}
+                      selectable={(isActionPhase || topTouchInProgress) && localTeam?.id === team.id}
+                      selectedMeldId={selectedMeldId}
+                      onSelectMeld={(id) => selectMeldTarget(selectedMeldId === id ? null : id)}
+                      canModify={isLocalTurn && localTeam?.id === team.id}
+                      onMoveWild={moveWildInMeld}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </section>
+
+          <div className="flex w-[3.75rem] shrink-0 flex-col items-center justify-center sm:w-[5.75rem]">
+            {seating.east && (
+              <SidePlayer
+                player={seating.east}
+                cardCount={game.hands[seating.east.id]?.length ?? 0}
+                isActive={game.turn.activePlayerId === seating.east.id}
                 remainingSeconds={remainingSeconds}
                 isPaused={isPaused}
-                highlight
-              />
-            )}
-          </div>
-          <div className="flex justify-end">
-            {seating.topRight && (
-              <OpponentBadge
-                player={seating.topRight}
-                cardCount={game.hands[seating.topRight.id]?.length ?? 0}
-                isActive={game.turn.activePlayerId === seating.topRight.id}
-                remainingSeconds={remainingSeconds}
-                isPaused={isPaused}
+                roleLabel="Opponent"
+                stackOrientation="side"
+                compact
               />
             )}
           </div>
         </div>
 
-          {/* Expanded meld zones for both teams (item 6) */}
-        <div className="grid min-h-0 grid-cols-1 gap-3 sm:grid-cols-2">
-          {room.teams.map((team) => (
-            <div key={team.id} className="flex min-h-0 flex-col gap-1">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-semibold text-white/60">{team.name}</span>
-              </div>
-              <MeldArea
-                team={team}
-                align={team.id === room.teams[0].id ? 'left' : 'right'}
-                selectable={(isActionPhase || topTouchInProgress) && localTeam?.id === team.id}
-                selectedMeldId={selectedMeldId}
-                onSelectMeld={(id) => selectMeldTarget(selectedMeldId === id ? null : id)}
-                canModify={isLocalTurn && localTeam?.id === team.id}
-                onMoveWild={moveWildInMeld}
-              />
-            </div>
-          ))}
-        </div>
+        {/* Play hub — flat minimal strip */}
+        <section className="play-hub relative mx-auto flex w-full max-w-5xl shrink-0 flex-col gap-1 px-2 py-1 sm:px-3 sm:py-1.5">
+          <div className="flex w-full items-center justify-center">
+            <TurnBanner
+              playerName={activePlayer?.name ?? ''}
+              phase={game.turn.phase}
+              isLocalTurn={isLocalTurn}
+              remainingSeconds={remainingSeconds}
+              isPaused={isPaused}
+              compact
+            />
+          </div>
 
-        {/* Turn banner + pozzettos + stock/discard + Top Touch controls */}
-        <div className="relative flex flex-col items-center gap-3">
-          <TurnBanner
-            playerName={activePlayer?.name ?? ''}
-            phase={game.turn.phase}
-            isLocalTurn={isLocalTurn}
-            remainingSeconds={remainingSeconds}
-            isPaused={isPaused}
-          />
-
-          {/* Item 5: both piles share the same card width and bottom-align on
-              the same baseline (items-end) so the row reads as one coherent
-              line instead of the stock/discard cards sitting at different
-              heights/sizes. */}
-          <div className="flex items-end gap-10">
-            <div className="flex flex-col items-center gap-1">
+          <div className="flex w-full items-end gap-2.5 sm:gap-3">
+            <div className="flex shrink-0 flex-col items-center gap-0.5">
               <button
                 ref={stockRef}
                 type="button"
                 disabled={!isDrawPhase || stockDepleted || topTouchInProgress}
                 onClick={handleDrawFromStock}
-                className="disabled:opacity-50"
+                className="rounded-lg transition enabled:hover:-translate-y-0.5 enabled:focus-visible:outline enabled:focus-visible:outline-2 enabled:focus-visible:outline-offset-2 enabled:focus-visible:outline-yellow-300 disabled:opacity-45"
                 title="Draw from stock"
                 data-flip-anchor="stock"
+                aria-label={`Draw from stock (${game.stock.length} cards)`}
               >
                 <Card faceDown width={DISCARD_CARD_WIDTH} />
               </button>
-              <span className="text-[11px] text-white/50">Stock ({game.stock.length})</span>
+              <span className="text-[10px] font-semibold text-white/55">Stock ({game.stock.length})</span>
             </div>
 
-            <div className="flex flex-col items-center gap-1" data-flip-anchor="discard">
+            <div
+              className="flex min-w-0 flex-1 flex-col items-center gap-0.5"
+              data-flip-anchor="discard"
+            >
               <DiscardPileView
                 cards={game.discardPile.cards}
                 topCardInteractive={isDrawPhase && !topTouchInProgress}
@@ -319,29 +424,56 @@ export function Table() {
                 selectedDiscardIds={selectedDiscardIds}
                 onToggleDiscardCard={toggleDiscardPileCard}
               />
-              <span className="text-[11px] text-white/50">Discard ({game.discardPile.cards.length})</span>
+              <span className="text-[10px] font-semibold text-white/55">
+                Discard ({game.discardPile.cards.length})
+              </span>
+            </div>
+
+            <div
+              key={feedback?.token ?? 'stable'}
+              className={`action-stack ml-auto flex w-[6.5rem] shrink-0 flex-col items-stretch gap-1 self-center sm:w-[7.25rem] ${
+                feedback ? 'animate-shake' : ''
+              }`}
+            >
+              <button
+                type="button"
+                disabled={!canDiscard}
+                onClick={discardSelected}
+                className="action-btn action-btn-danger action-btn-stack"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={handleMeld}
+                className="action-btn action-btn-blue action-btn-stack"
+                title="Select hand cards (and optionally one of your team's melds above to append to or a natural card to swap in for a wild)"
+              >
+                {topTouchInProgress ? 'Meld Top' : 'Meld'}
+              </button>
+              <button
+                type="button"
+                disabled={!canDeclareShow}
+                onClick={declareShow}
+                className="action-btn action-btn-gold action-btn-stack"
+                title={showUnmetReasons.length > 0 ? showUnmetReasons.join(' ') : 'Declare Show and end the round'}
+              >
+                Declare Show
+              </button>
             </div>
           </div>
 
-          {/* Item 5: two-phase Top Touch. Tapping the top discard card
-              proposes it; the player then picks hand cards and/or any other
-              individual discard cards to include in the unlocking meld,
-              and/or a meld group, then confirms with Meld. Only on success
-              does the rest of the pile join the hand. */}
           {isDrawPhase && !topTouchInProgress && topDiscard && (
-            <p className="text-center text-[11px] text-white/40">Tap the top discard card to Top Touch it.</p>
+            <p className="mx-auto text-center text-[10px] leading-relaxed text-white/40">
+              Tap top discard to Top Touch.
+            </p>
           )}
           {topTouchInProgress && (
-            <div className="flex flex-col items-center gap-1 rounded-lg bg-amber-400/10 px-3 py-2 ring-1 ring-amber-300/30">
-              <p className="text-center text-xs font-medium text-amber-200">
-                Top Touch in progress — select hand cards, tap any discard cards to include in the meld, and/or a meld
-                group above, then Meld. (Top card stays selected.)
+            <div className="mx-auto flex w-full max-w-lg flex-col items-center gap-1.5 rounded-xl bg-amber-400/10 px-2.5 py-2 ring-1 ring-amber-300/30">
+              <p className="text-center text-[11px] font-medium leading-relaxed text-amber-100">
+                Top Touch — select hand / discard cards / a meld, then Meld.
               </p>
-              <button
-                type="button"
-                onClick={cancelTopTouch}
-                className="rounded-md bg-white/10 px-2 py-1 text-[11px] font-medium text-white/70 hover:bg-white/20"
-              >
+              <button type="button" onClick={cancelTopTouch} className="action-btn action-btn-ghost !min-h-8 !text-[11px]">
                 Cancel Top Touch
               </button>
             </div>
@@ -351,103 +483,115 @@ export function Table() {
             <button
               type="button"
               onClick={forceSuddenDeathEndRound}
-              className="rounded-md border border-red-300/40 bg-red-500/20 px-3 py-1 text-xs font-medium text-red-100 hover:bg-red-500/30"
+              className="action-btn action-btn-danger mx-auto !min-h-9 !text-xs"
               title="Stock is empty. If you cannot Top Touch AND immediately empty your hand with a legal Show this turn, the round must end now."
             >
-              Stock empty — End Round (Sudden Death)
+              Stock empty — End Round
             </button>
           )}
-        </div>
 
-        {/* Local player: 3 meld actions (item 7) + hand (item 5 clipping fix) */}
-        <div className="flex flex-col items-center gap-2">
-          <div className="flex items-center gap-2 text-sm">
-            {seating.bottom && (
-              <PlayerAvatar
-                name={seating.bottom.name}
-                color={seating.bottom.avatarColor}
-                connectionStatus={seating.bottom.connectionStatus}
-                size={32}
-              />
-            )}
-            <span className="font-medium">{seating.bottom?.name} (you)</span>
+          {feedback && (
+            <p className="mx-auto mt-0.5 w-full max-w-xl rounded-xl bg-red-900/35 px-4 py-2 text-center text-sm font-medium leading-snug text-red-50/90 ring-1 ring-red-300/25 backdrop-blur-sm sm:text-[14px]">
+              {feedback.message}
+            </p>
+          )}
+          {!feedback && showUnmetReasons.length > 0 && isActionPhase && (
+            <p className="mx-auto max-w-xl text-center text-xs font-medium text-white/55">{showUnmetReasons.join(' ')}</p>
+          )}
+        </section>
+
+        {/* SOUTH — hand always centered; avatar/pozzetto overlay sides */}
+        <section className="relative flex w-full shrink-0 justify-center pb-0.5 pt-0">
+          <div className="pointer-events-auto absolute bottom-1 left-0 z-20 flex flex-col items-center gap-1 pl-0.5 sm:left-1 sm:pl-0">
+            <div className="flex items-center gap-2 rounded-full bg-black/35 px-2.5 py-1.5 ring-1 ring-white/10 backdrop-blur-sm">
+              {seating.south && (
+                <PlayerAvatar
+                  name={seating.south.name}
+                  color={seating.south.avatarColor}
+                  connectionStatus={seating.south.connectionStatus}
+                  size={40}
+                />
+              )}
+              <p className="max-w-[4.5rem] truncate pr-0.5 text-sm font-semibold tracking-wide sm:max-w-[7rem]">
+                {seating.south?.name}
+              </p>
+            </div>
             {isLocalTurn && remainingSeconds != null && (
               <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
             )}
           </div>
 
-          <div key={feedback?.token ?? 'stable'} className="flex flex-col items-center gap-1">
-            <div
-              className={`flex flex-wrap items-center justify-center gap-3 ${feedback ? 'animate-shake' : ''}`}
-            >
-              <button
-                type="button"
-                disabled={!canDiscard}
-                onClick={discardSelected}
-                className="rounded-lg bg-red-500/90 px-4 py-2 text-sm font-semibold text-white shadow transition enabled:hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Discard
-              </button>
-              <button
-                type="button"
-                onClick={handleMeld}
-                className="rounded-lg bg-blue-500/90 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-blue-400"
-                title="Select hand cards (and optionally one of your team's melds above to append to or a natural card to swap in for a wild)"
-              >
-                {topTouchInProgress ? 'Meld with Top Card' : 'Meld'}
-              </button>
-              <button
-                type="button"
-                disabled={!canDeclareShow}
-                onClick={declareShow}
-                className="rounded-lg bg-yellow-400 px-4 py-2 text-sm font-semibold text-emerald-950 shadow transition enabled:hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-40"
-                title={showUnmetReasons.length > 0 ? showUnmetReasons.join(' ') : 'Declare Show and end the round'}
-              >
-                Declare Show
-              </button>
-            </div>
-
-            {feedback && (
-              <p className="max-w-md rounded-md bg-red-500/20 px-3 py-1 text-center text-xs font-medium text-red-200 ring-1 ring-red-400/40">
-                {feedback.message}
-              </p>
-            )}
-            {!feedback && showUnmetReasons.length > 0 && isActionPhase && (
-              <p className="max-w-md text-center text-[11px] text-white/40">{showUnmetReasons.join(' ')}</p>
-            )}
-          </div>
-
-          {/* Extra top/side padding here is intentional: it gives the
-              enlarged/selected card (translate-y + ring) room to render
-              fully instead of being clipped by this scroll container
-              (item 5). `shrink-0` on each card is required - without it
-              flex-shrink + negative margins collapses the whole hand into
-              a single stacked pile. */}
           <div
-            className="flex w-full max-w-full items-end justify-center overflow-x-auto overflow-y-visible px-4 pb-2 pt-8 scrollbar-thin"
+            ref={handRailRef}
+            className="hand-rail mx-auto w-full max-w-full justify-center overflow-visible"
+            style={{ maxWidth: HAND_MAX_FAN_WIDTH }}
             data-flip-anchor={localPlayerId ? `hand-${localPlayerId}` : undefined}
+            onPointerLeave={() => {
+              if (!draggingId) setHoveredHandId(null)
+            }}
           >
-            {orderedLocalHand.map((card, i) => (
-              <div
-                key={card.id}
-                onPointerDown={() => handleCardPointerDown(card.id)}
-                onPointerEnter={() => handleCardPointerEnter(card.id)}
-                className={`relative shrink-0 touch-none transition-opacity ${draggingId === card.id ? 'opacity-70' : ''}`}
-                style={{ marginLeft: i === 0 ? 0 : -18, zIndex: i }}
-              >
-                <AnimatedCard
-                  flipId={card.id}
-                  rank={card.rank}
-                  suit={card.suit}
-                  width={88}
-                  selected={selectedCardIds.includes(card.id)}
-                  isNew={isRecentlyAcquired(card.id)}
-                  onClick={() => toggleSelectCard(card.id)}
-                />
-              </div>
-            ))}
+            <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
+            {orderedLocalHand.map((card, i) => {
+              // Only the touched/dragged card enlarges — never neighbors swept during reorder.
+              const isActiveLift = draggingId === card.id || (!draggingId && hoveredHandId === card.id)
+              return (
+                <div
+                  key={card.id}
+                  onPointerDown={() => {
+                    isReorderingRef.current = true
+                    handleCardPointerDown(card.id)
+                    setHoveredHandId(card.id)
+                  }}
+                  onPointerEnter={() => {
+                    handleCardPointerEnter(card.id)
+                    // While reordering, pointerenter fires on every card we swap past —
+                    // do not treat those as hovered/enlarged.
+                    if (!isReorderingRef.current) setHoveredHandId(card.id)
+                  }}
+                  className={`relative shrink-0 touch-none transition-opacity duration-150 ${
+                    draggingId === card.id ? 'opacity-90' : ''
+                  }`}
+                  style={{
+                    marginLeft: i === 0 ? 0 : -handOverlap,
+                    zIndex: isActiveLift ? 80 : i,
+                  }}
+                >
+                  <AnimatedCard
+                    flipId={card.id}
+                    rank={card.rank}
+                    suit={card.suit}
+                    width={HAND_CARD_WIDTH}
+                    selected={selectedCardIds.includes(card.id)}
+                    isNew={isRecentlyAcquired(card.id)}
+                    onClick={() => toggleSelectCard(card.id)}
+                    className="hover:!translate-y-0"
+                    wrapperClassName={`transition-transform duration-150 ease-out ${
+                      isActiveLift ? '-translate-y-4 scale-110' : ''
+                    }`}
+                  />
+                </div>
+              )
+            })}
+            </div>
           </div>
-        </div>
+
+          <div className="pointer-events-none absolute bottom-0 right-0 z-20 flex flex-col items-end gap-1.5 sm:right-1">
+            <div className="pointer-events-auto rounded-xl bg-black/40 px-2.5 py-2 ring-1 ring-white/10 backdrop-blur-sm">
+              <p className="mb-1.5 text-right text-[9px] font-bold uppercase tracking-[0.14em] text-white/45">
+                Pozzetto
+              </p>
+              <PozzettoStacks
+                teams={room.teams}
+                localTeamId={localTeam?.id}
+                stackCounts={{
+                  'team-a': game.pozzettoStacks['team-a']?.length ?? 0,
+                  'team-b': game.pozzettoStacks['team-b']?.length ?? 0,
+                }}
+              />
+            </div>
+            <PozzettoActiveStatus teams={room.teams} localTeamId={localTeam?.id} />
+          </div>
+        </section>
       </div>
 
       {game.pendingSlide && (
@@ -455,44 +599,19 @@ export function Table() {
           <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-emerald-950 p-6 text-center shadow-2xl">
             <h3 className="text-lg font-bold text-white">Slide the displaced wild card</h3>
             <p className="mt-1 text-sm text-white/60">
-              Your natural card fills the wild's slot. Choose which edge the wild card slides to.
+              Your natural card fills the wild&apos;s slot. Move the wild up or down in the meld column.
             </p>
             <div className="mt-4 flex justify-center gap-3">
-              <button
-                type="button"
-                onClick={() => resolveSlide('bottom')}
-                className="flex-1 rounded-lg border border-white/20 px-4 py-2 font-medium text-white transition hover:bg-white/10"
-              >
-                Bottom edge
+              <button type="button" onClick={() => resolveSlide('top')} className="action-btn action-btn-gold flex-1">
+                Move up
               </button>
-              <button
-                type="button"
-                onClick={() => resolveSlide('top')}
-                className="flex-1 rounded-lg bg-yellow-400 px-4 py-2 font-semibold text-emerald-950 transition hover:bg-yellow-300"
-              >
-                Top edge
+              <button type="button" onClick={() => resolveSlide('bottom')} className="action-btn action-btn-ghost flex-1">
+                Move down
               </button>
             </div>
           </div>
         </div>
       )}
-
-      <div className="pointer-events-none absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2">
-        <div className="pointer-events-auto rounded-xl bg-black/35 px-3 py-2 ring-1 ring-white/10">
-          <p className="mb-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-white/40">
-            Pozzetto
-          </p>
-          <PozzettoStacks
-            teams={room.teams}
-            localTeamId={localTeam?.id}
-            stackCounts={{
-              'team-a': game.pozzettoStacks['team-a']?.length ?? 0,
-              'team-b': game.pozzettoStacks['team-b']?.length ?? 0,
-            }}
-          />
-        </div>
-        <PozzettoActiveStatus teams={room.teams} localTeamId={localTeam?.id} />
-      </div>
 
       {room.status === 'round-end' && (
         <RoundEndModal
@@ -510,7 +629,6 @@ export function Table() {
   )
 }
 
-/** Bottom-right status once a team has picked up their Pozzetto. */
 function PozzettoActiveStatus({
   teams,
   localTeamId,
@@ -526,7 +644,7 @@ function PozzettoActiveStatus({
     }))
   if (lines.length === 0) return null
   return (
-    <div className="flex max-w-[220px] flex-col items-end gap-1">
+    <div className="pointer-events-auto flex max-w-[220px] flex-col items-end gap-1">
       {lines.map((line) => (
         <p
           key={line.id}
@@ -539,39 +657,61 @@ function PozzettoActiveStatus({
   )
 }
 
-function OpponentBadge({
+function SidePlayer({
   player,
   cardCount,
   isActive = false,
   remainingSeconds = null,
   isPaused = false,
   highlight = false,
+  roleLabel,
+  stackOrientation,
+  compact = false,
 }: {
   player: Player
   cardCount: number
   isActive?: boolean
   remainingSeconds?: number | null
-  /** True while the room's turn timer is paused for everyone at the table. */
   isPaused?: boolean
-  /** True for the local player's teammate, seated center of the top row (item 6). */
   highlight?: boolean
+  roleLabel: string
+  stackOrientation: 'horizontal' | 'vertical' | 'side'
+  compact?: boolean
 }) {
   return (
     <div
-      className={`flex flex-col items-center gap-2 rounded-xl px-3 py-2 transition-colors ${
-        highlight ? 'bg-yellow-400/10 ring-1 ring-yellow-300/30' : 'bg-black/25'
-      } ${isActive ? 'ring-2 ring-yellow-300' : ''}`}
+      className={`flex transition-[box-shadow] duration-200 ${
+        compact
+          ? 'felt-panel w-full flex-col items-center gap-1.5 px-1.5 py-2 sm:px-2.5'
+          : 'items-center gap-2.5 rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/10 backdrop-blur-sm'
+      } ${highlight && !compact ? 'ring-yellow-300/40' : ''} ${
+        isActive ? 'ring-2 ring-yellow-300 shadow-[0_0_0_1px_rgba(250,204,21,0.25)]' : ''
+      }`}
     >
-      <PlayerAvatar name={player.name} color={player.avatarColor} connectionStatus={player.connectionStatus} size={40} />
-      <div className="text-center">
-        <p className="flex items-center justify-center gap-1 text-xs font-semibold leading-tight">
+      <PlayerAvatar
+        name={player.name}
+        color={player.avatarColor}
+        connectionStatus={player.connectionStatus}
+        size={compact ? 34 : 36}
+      />
+      <div className={`min-w-0 ${compact ? 'w-full text-center' : 'flex-1'}`}>
+        <p className={`font-bold leading-tight text-white ${compact ? 'truncate text-[10px] sm:text-xs' : 'truncate text-xs'}`}>
           {player.name}
-          {highlight && <span className="text-[9px] font-normal text-yellow-300">(partner)</span>}
+          {highlight && <span className="ml-1 text-[9px] font-semibold text-yellow-300/90">(bot)</span>}
         </p>
-        <p className="text-[10px] text-white/50">Seat {player.seat + 1}</p>
+        {compact && (
+          <p className="truncate text-[9px] text-white/45">
+            {roleLabel}
+            <span className="hidden sm:inline"> · Seat {player.seat + 1}</span>
+          </p>
+        )}
+        {isActive && remainingSeconds != null && (
+          <div className={`mt-1 ${compact ? 'flex justify-center' : ''}`}>
+            <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
+          </div>
+        )}
       </div>
-      <MiniCardStack count={cardCount} flipAnchorId={`hand-${player.id}`} />
-      {isActive && remainingSeconds != null && <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />}
+      <MiniCardStack count={cardCount} flipAnchorId={`hand-${player.id}`} orientation={stackOrientation} />
     </div>
   )
 }

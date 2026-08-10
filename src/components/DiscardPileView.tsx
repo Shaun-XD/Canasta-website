@@ -2,9 +2,9 @@ import { useRef } from 'react'
 import type { CardModel } from '../types/game'
 import { AnimatedCard } from './AnimatedCard'
 
-export const DISCARD_CARD_WIDTH = 72
-/** Fraction of each card's width that the next card overlaps, leaving the rest as the visible right-edge sliver. */
-const OVERLAP_RATIO = 0.7
+export const DISCARD_CARD_WIDTH = 64
+/** Fraction of each card's width that the next card overlaps — lower = wider fan / more of each card visible. */
+const OVERLAP_RATIO = 0.48
 /**
  * Max pointer travel (px) between pointerdown and the matching click for a
  * gesture to still count as a "tap" that toggles selection. Anything past
@@ -100,12 +100,9 @@ export function DiscardPileView({
   const topIndex = cards.length - 1
 
   return (
-    // Generous vertical padding keeps the PICK-UP badge, selection ring, and
-    // hover lift inside the scrollport so overflow-x-auto does not clip the
-    // top edge of the cards (overflow-y becomes auto whenever overflow-x is
-    // not visible).
+    // No visible scrollbar — fan uses the flex middle; scrolls only if the pile is huge.
     <div
-      className="flex max-w-full items-end overflow-x-auto px-3 pb-3 pt-14 scrollbar-thin"
+      className="discard-fan flex max-w-full items-end overflow-x-auto px-0.5 pb-0 pt-6 sm:pt-7"
       onPointerDown={handleRowPointerDown}
       onPointerMove={handleRowPointerMove}
       onPointerUp={handleRowPointerEnd}
