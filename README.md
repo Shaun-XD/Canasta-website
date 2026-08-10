@@ -29,9 +29,8 @@ are marked with `TODO(rules)` at their point of use in the code:
 - [Tailwind CSS](https://tailwindcss.com/) for styling
 - [React Router](https://reactrouter.com/) for navigation (`/`, `/lobby/:roomId`, `/game/:roomId`)
 - [Vitest](https://vitest.dev/) for unit-testing the rules engine
-- [socket.io-client](https://socket.io/docs/v4/client-api/) is included as a dependency for future
-  real-time wiring, but is **not connected to any server yet** — see
-  `src/lib/socket.ts`.
+- [socket.io-client](https://socket.io/docs/v4/client-api/) talks to the FastAPI
+  realtime backend in `server/` (see `server/README.md` and `src/lib/socket.ts`).
 
 All card, avatar, and table visuals are original SVG/CSS generated in-project
 (no third-party image assets). See `assets/MANIFEST.json` for the full asset
@@ -39,16 +38,42 @@ inventory and licensing notes.
 
 ## Running locally
 
+### Frontend only (solo / bots)
+
 ```bash
 npm install
 npm run dev
 ```
 
-The dev server runs at `http://localhost:5173` by default. Open two browser
-windows/tabs pointed at the same room to see the mocked "multiplayer"
-experience (today only one browser tab is a "real" player — the other three
-seats are filled by mock/placeholder players driven by the same real rules
-engine, so the demo plays out with correct legal moves).
+Choose **Solo (bots)** on the landing page. Three seats are filled by bots.
+
+### Online multiplayer (devices / browsers)
+
+1. Start the FastAPI realtime server (see [`server/README.md`](server/README.md)):
+
+```bash
+cd server/game_bridge && npm install && cd ..
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:asgi_app --host 0.0.0.0 --port 4000
+```
+
+2. Point the Vite app at it and start the UI:
+
+```bash
+# repo root
+cp .env.example .env.local   # VITE_SOCKET_URL=http://localhost:4000
+npm install
+npm run dev
+```
+
+3. Open the site on two+ devices → **Online** → create/join the same room code.
+
+### Deploy
+
+- **Frontend:** Vercel (static Vite build). Set `VITE_SOCKET_URL` to your API host.
+- **Backend:** Railway / Render / Fly (long-running process — Vercel cannot host WebSockets).
+  Details in `server/README.md`.
 
 To type-check and build for production:
 

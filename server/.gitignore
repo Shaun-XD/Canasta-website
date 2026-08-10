@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+game_bridge/node_modules/
+.env

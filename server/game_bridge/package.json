@@ -1,0 +1,11 @@
+{
+  "name": "canasta-game-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bridge": "tsx bridge.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.19.3"
+  }
+}

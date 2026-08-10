@@ -30,6 +30,52 @@ import {
   playPozzettoClaimFlights,
   seedFlipOriginFromAnchor,
 } from '../hooks/useCardFlip'
+import {
+  bindSocketStoreHandlers,
+  disconnectSocket,
+  socketAttemptMeld,
+  socketAutoEndTurn,
+  socketCreateRoom,
+  socketDeclareShow,
+  socketDiscard,
+  socketDraw,
+  socketForceSuddenDeath,
+  socketJoinRoom,
+  socketMoveWild,
+  socketNextRound,
+  socketResolveSlide,
+  socketReturnToLobby,
+  socketRejoinRoom,
+  socketSetReady,
+  socketSetTarget,
+  socketSetTeam,
+  socketSetTimer,
+  socketStartGame,
+  socketStartNewGame,
+  socketTogglePause,
+} from '../lib/socket'
+
+export type PlayMode = 'solo' | 'online'
+
+const ONLINE_SESSION_KEY = 'canasta.onlineSession'
+
+function persistOnlineSession(roomId: string, playerId: string) {
+  try {
+    localStorage.setItem(ONLINE_SESSION_KEY, JSON.stringify({ roomId, playerId }))
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearOnlineSession() {
+  try {
+    localStorage.removeItem(ONLINE_SESSION_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+let onlineSyncBound = false
 
 /** Per-action pacing for mock/bot turns — longer than the slow bot flight. */
 const BOT_ACTION_MS = 1400
@@ -136,6 +182,8 @@ interface GameStoreState {
   room: RoomState | null
   game: GameState | null
   localPlayerId: PlayerId | null
+  /** solo = local bots; online = FastAPI realtime backend */
+  playMode: PlayMode
   selectedCardIds: string[]
   selectedMeldId: string | null
   /**
@@ -154,8 +202,17 @@ interface GameStoreState {
   selectedDiscardIds: string[]
   lastActionError: string | null
   actions: {
+    /** Solo demo with 3 bots (local-only, no server). */
     createRoom: (playerName: string, targetScore?: number, turnTimerSeconds?: number) => string
     joinRoom: (roomId: string, playerName: string) => void
+    /** Online multiplayer via FastAPI Socket.IO backend. */
+    createRoomOnline: (
+      playerName: string,
+      targetScore?: number,
+      turnTimerSeconds?: number,
+    ) => Promise<string>
+    joinRoomOnline: (roomId: string, playerName: string) => Promise<void>
+    rejoinOnlineSession: () => Promise<boolean>
     setLocalTeam: (teamId: TeamId) => void
     setLocalSeat: (seat: number) => void
     toggleReady: () => void
@@ -198,6 +255,8 @@ interface GameStoreState {
      * fresh deal, round 1. Stays on the game screen (does not return to lobby).
      */
     startNewGame: () => void
+    /** Advance to the next round after round-end (online + solo). */
+    startNextRound: () => void
     /** Leaves the table and returns the room to lobby status (game state cleared). */
     returnToLobby: () => void
     /**
@@ -208,6 +267,36 @@ interface GameStoreState {
     /** @internal mock-only helper, not meant to be called by UI code directly */
     _mockAdvanceUntilLocal: () => void
   }
+}
+
+function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: () => GameStoreState) {
+  if (onlineSyncBound) return
+  onlineSyncBound = true
+  bindSocketStoreHandlers({
+    onRoomState: (room, playerId) => {
+      set({ room, localPlayerId: playerId, playMode: 'online' })
+    },
+    onGameState: (game) => {
+      const prev = get()
+      set({
+        game,
+        // Clear ephemeral UI selection when server advances turn / phase.
+        ...(game &&
+        prev.game &&
+        (game.turn.activePlayerId !== prev.game.turn.activePlayerId ||
+          game.turn.phase !== prev.game.turn.phase ||
+          game.turn.turnNumber !== prev.game.turn.turnNumber)
+          ? {
+              selectedCardIds: [],
+              selectedMeldId: null,
+              topTouchInProgress: false,
+              selectedDiscardIds: [],
+            }
+          : {}),
+      })
+    },
+    onActionError: (error) => set({ lastActionError: error }),
+  })
 }
 
 function dealNewRound(room: RoomState): GameState {
@@ -385,6 +474,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   room: null,
   game: null,
   localPlayerId: null,
+  playMode: 'solo',
   selectedCardIds: [],
   selectedMeldId: null,
   topTouchInProgress: false, selectedDiscardIds: [],
@@ -408,6 +498,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const players = [localPlayer, ...mockPlayers]
 
       set({
+        playMode: 'solo',
         room: {
           roomId,
           status: 'lobby',
@@ -444,6 +535,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const players = [localPlayer, ...mockPlayers]
 
       set({
+        playMode: 'solo',
         room: {
           roomId: roomId.toUpperCase(),
           status: 'lobby',
@@ -462,16 +554,91 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       })
     },
 
+    createRoomOnline: async (playerName, targetScore, turnTimerSeconds) => {
+      ensureOnlineSync(set, get)
+      const ack = await socketCreateRoom({
+        playerName,
+        targetScore,
+        turnTimerSeconds,
+      })
+      if (!ack.ok || !ack.roomId || !ack.playerId || !ack.room) {
+        throw new Error(ack.error || 'Could not create room.')
+      }
+      persistOnlineSession(ack.roomId, ack.playerId)
+      set({
+        playMode: 'online',
+        room: ack.room,
+        game: null,
+        localPlayerId: ack.playerId,
+        selectedCardIds: [],
+        selectedMeldId: null,
+        topTouchInProgress: false,
+        selectedDiscardIds: [],
+        lastActionError: null,
+      })
+      return ack.roomId
+    },
+
+    joinRoomOnline: async (roomId, playerName) => {
+      ensureOnlineSync(set, get)
+      const ack = await socketJoinRoom({ roomId, playerName })
+      if (!ack.ok || !ack.roomId || !ack.playerId || !ack.room) {
+        throw new Error(ack.error || 'Could not join room.')
+      }
+      persistOnlineSession(ack.roomId, ack.playerId)
+      set({
+        playMode: 'online',
+        room: ack.room,
+        game: ack.game ?? null,
+        localPlayerId: ack.playerId,
+        selectedCardIds: [],
+        selectedMeldId: null,
+        topTouchInProgress: false,
+        selectedDiscardIds: [],
+        lastActionError: null,
+      })
+    },
+
+    rejoinOnlineSession: async () => {
+      try {
+        const raw = localStorage.getItem(ONLINE_SESSION_KEY)
+        if (!raw) return false
+        const { roomId, playerId } = JSON.parse(raw) as { roomId: string; playerId: string }
+        if (!roomId || !playerId) return false
+        ensureOnlineSync(set, get)
+        const ack = await socketRejoinRoom({ roomId, playerId })
+        if (!ack.ok || !ack.room || !ack.playerId) return false
+        set({
+          playMode: 'online',
+          room: ack.room,
+          game: ack.game ?? null,
+          localPlayerId: ack.playerId,
+          lastActionError: null,
+        })
+        return true
+      } catch {
+        return false
+      }
+    },
+
     setLocalTeam: (teamId: TeamId) => {
-      const { room, localPlayerId } = get()
+      const { room, localPlayerId, playMode } = get()
       if (!room || !localPlayerId) return
+      if (playMode === 'online') {
+        socketSetTeam(teamId)
+        return
+      }
       const players = room.players.map((p) => (p.id === localPlayerId ? { ...p, teamId } : p))
       set({ room: { ...room, players, teams: makeTeams(players) } })
     },
 
     setLocalSeat: (seat: number) => {
-      const { room, localPlayerId } = get()
+      const { room, localPlayerId, playMode } = get()
       if (!room || !localPlayerId) return
+      if (playMode === 'online') {
+        // Seat changes online are host/lobby swaps via set_seat RPC — expose later if needed.
+        return
+      }
       const occupied = room.players.find((p) => p.seat === seat)
       const players = room.players.map((p) => {
         if (p.id === localPlayerId) return { ...p, seat }
@@ -485,27 +652,43 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     toggleReady: () => {
-      const { room, localPlayerId } = get()
+      const { room, localPlayerId, playMode } = get()
       if (!room || !localPlayerId) return
+      if (playMode === 'online') {
+        socketSetReady()
+        return
+      }
       const players = room.players.map((p) => (p.id === localPlayerId ? { ...p, isReady: !p.isReady } : p))
       set({ room: { ...room, players } })
     },
 
     setMatchTargetScore: (score: number) => {
-      const { room } = get()
+      const { room, playMode } = get()
       if (!room) return
+      if (playMode === 'online') {
+        socketSetTarget(Math.max(500, Math.round(score)))
+        return
+      }
       set({ room: { ...room, matchTargetScore: Math.max(500, Math.round(score)) } })
     },
 
     setTurnTimerSeconds: (seconds: number) => {
-      const { room } = get()
+      const { room, playMode } = get()
       if (!room) return
+      if (playMode === 'online') {
+        socketSetTimer(Math.max(10, Math.round(seconds)))
+        return
+      }
       set({ room: { ...room, turnTimerSeconds: Math.max(10, Math.round(seconds)) } })
     },
 
     startGame: () => {
-      const { room } = get()
+      const { room, playMode } = get()
       if (!room) return
+      if (playMode === 'online') {
+        socketStartGame()
+        return
+      }
       if (room.players.length < 4 || !room.players.every((p) => p.isReady)) return
 
       botTurnGeneration += 1
@@ -539,10 +722,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     selectMeldTarget: (meldId: string | null) => set({ selectedMeldId: meldId }),
 
     drawFromStock: () => {
-      const { game, room, localPlayerId } = get()
+      const { game, room, localPlayerId, playMode } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'draw') return
       if (game.stock.length === 0) return
+      if (playMode === 'online') {
+        socketDraw()
+        return
+      }
 
       const { stock, hand, drawnCard } = performDrawFromStock(game.stock, game.hands[localPlayerId])
       set({
@@ -597,12 +784,37 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     attemptMeld: () => {
-      const { game, room, localPlayerId, selectedCardIds, selectedMeldId, topTouchInProgress, selectedDiscardIds } = get()
+      const {
+        game,
+        room,
+        localPlayerId,
+        selectedCardIds,
+        selectedMeldId,
+        topTouchInProgress,
+        selectedDiscardIds,
+        playMode,
+      } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
       const hand = game.hands[localPlayerId]
+
+      if (playMode === 'online') {
+        const topCard = game.discardPile.cards[game.discardPile.cards.length - 1]
+        const meldDiscardIds =
+          topTouchInProgress && topCard
+            ? selectedDiscardIds.length > 0 && selectedDiscardIds.includes(topCard.id)
+              ? selectedDiscardIds
+              : [topCard.id]
+            : []
+        socketAttemptMeld({
+          handCardIds: selectedCardIds,
+          targetMeldId: selectedMeldId,
+          selectedDiscardIds: meldDiscardIds,
+        })
+        return
+      }
 
       // Two-phase Top Touch (item 5): individually selected discard cards
       // (always including the top card) are combined with the current
@@ -741,9 +953,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     moveWildInMeld: (meldId: string) => {
-      const { game, room, localPlayerId } = get()
+      const { game, room, localPlayerId, playMode } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
+      if (playMode === 'online') {
+        socketMoveWild(meldId)
+        return
+      }
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
       const meld = team.melds.find((m) => m.id === meldId)
@@ -763,11 +979,19 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     resolveSlide: (edge: 'top' | 'bottom') => {
-      const { game, room, localPlayerId, selectedCardIds } = get()
+      const { game, room, localPlayerId, selectedCardIds, playMode } = get()
       if (!game || !room || !localPlayerId || !game.pendingSlide) return
       const team = room.teams.find((t) => t.id === game.pendingSlide!.teamId)
       const meld = team?.melds.find((m) => m.id === game.pendingSlide!.meldId)
       if (!team || !meld || selectedCardIds.length !== 1) return
+      if (playMode === 'online') {
+        socketResolveSlide({
+          edge,
+          handCardIds: selectedCardIds,
+          targetMeldId: meld.id,
+        })
+        return
+      }
 
       const result = appendCardFromHand(game.hands[localPlayerId], selectedCardIds[0], meld, edge)
       if (!result.ok) {
@@ -800,11 +1024,15 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     discardSelected: () => {
-      const { game, room, localPlayerId, selectedCardIds } = get()
+      const { game, room, localPlayerId, selectedCardIds, playMode } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
       if (game.turn.phase !== 'action' && game.turn.phase !== 'discard') return
       if (selectedCardIds.length !== 1) return
+      if (playMode === 'online') {
+        socketDiscard(selectedCardIds[0])
+        return
+      }
 
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
@@ -853,9 +1081,18 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     declareShow: () => {
-      const { game, room, localPlayerId, selectedCardIds } = get()
+      const { game, room, localPlayerId, selectedCardIds, playMode } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'action') return
+      if (playMode === 'online') {
+        // If one card left, discard it first then show — server declare_show
+        // checks empty hand; send discard then declare.
+        if (selectedCardIds.length === 1 && (game.hands[localPlayerId]?.length ?? 0) === 1) {
+          socketDiscard(selectedCardIds[0])
+        }
+        socketDeclareShow()
+        return
+      }
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
 
@@ -899,9 +1136,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     forceSuddenDeathEndRound: () => {
-      const { room, game } = get()
+      const { room, game, playMode } = get()
       if (!room || !game) return
       if (game.stock.length !== 0) return
+      if (playMode === 'online') {
+        socketForceSuddenDeath()
+        return
+      }
       const { room: scoredRoom, game: scoredGame } = endRoundWithScore(room, game, 'sudden-death', null)
       set({
         room: scoredRoom,
@@ -918,10 +1159,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     // draw if needed, then discard (preferring whatever the player already
     // had selected) so the turn always resolves instead of stalling.
     autoEndTurn: () => {
-      const { game, room, localPlayerId, selectedCardIds } = get()
+      const { game, room, localPlayerId, selectedCardIds, playMode } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
       if (room.status !== 'in-progress') return
+      if (playMode === 'online') {
+        socketAutoEndTurn()
+        return
+      }
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
 
@@ -1004,8 +1249,12 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     togglePauseTimer: () => {
-      const { game } = get()
+      const { game, playMode } = get()
       if (!game) return
+      if (playMode === 'online') {
+        socketTogglePause()
+        return
+      }
 
       if (game.turn.isPaused) {
         // Resume: shift `startedAt` forward by however long the pause
@@ -1026,8 +1275,12 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     startNewGame: () => {
-      const { room } = get()
+      const { room, playMode } = get()
       if (!room) return
+      if (playMode === 'online') {
+        socketStartNewGame()
+        return
+      }
       botTurnGeneration += 1
       // Full match reset: wipe scores, melds, pozzetto, history — then redeal.
       const teams = room.teams.map((t) => ({
@@ -1057,9 +1310,46 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       }
     },
 
+    startNextRound: () => {
+      const { room, game, playMode } = get()
+      if (!room || !game) return
+      if (playMode === 'online') {
+        socketNextRound()
+        return
+      }
+      if (room.status !== 'round-end' || game.gameOverTeamId) return
+      botTurnGeneration += 1
+      const teams = room.teams.map((t) => ({
+        ...t,
+        melds: [],
+        hasGoneOut: false,
+        pozzetto: initialPozzettoState(),
+      }))
+      const nextRoomState: RoomState = { ...room, teams, status: 'in-progress' }
+      const nextGame = dealNewRound(nextRoomState)
+      nextGame.round = game.round + 1
+      nextGame.roundScoresHistory = game.roundScoresHistory
+      set({
+        room: nextRoomState,
+        game: nextGame,
+        selectedCardIds: [],
+        selectedMeldId: null,
+        topTouchInProgress: false,
+        selectedDiscardIds: [],
+        lastActionError: null,
+      })
+      if (nextGame.turn.activePlayerId !== get().localPlayerId) {
+        setTimeout(() => get().actions._mockAdvanceUntilLocal(), BOT_BETWEEN_TURNS_MS)
+      }
+    },
+
     returnToLobby: () => {
-      const { room } = get()
+      const { room, playMode } = get()
       if (!room) return
+      if (playMode === 'online') {
+        socketReturnToLobby()
+        return
+      }
       botTurnGeneration += 1
       // Exit table play but keep the room (players / teams) so lobby can restart.
       const teams = room.teams.map((t) => ({
@@ -1082,12 +1372,15 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
     exitToHome: () => {
       botTurnGeneration += 1
+      clearOnlineSession()
+      disconnectSocket()
       // Wipe all in-memory session state (there is no localStorage persistence;
       // this is the full "clear cache" / leave site session for the client).
       set({
         room: null,
         game: null,
         localPlayerId: null,
+        playMode: 'solo',
         selectedCardIds: [],
         selectedMeldId: null,
         topTouchInProgress: false,
@@ -1106,6 +1399,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
      * player so bot turns feel watchable rather than an instant state jump.
      */
     _mockAdvanceUntilLocal: () => {
+      if (get().playMode === 'online') return
       void runMockBotTurn(get, set)
     },
   },
@@ -1115,6 +1409,7 @@ type StoreGet = typeof useGameStore.getState
 type StoreSet = typeof useGameStore.setState
 
 async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
+  if (get().playMode === 'online') return
   const generation = botTurnGeneration
   const isCancelled = () =>
     botTurnGeneration !== generation || get().room?.status !== 'in-progress'

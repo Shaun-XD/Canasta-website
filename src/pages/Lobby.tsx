@@ -9,7 +9,7 @@ export function Lobby() {
   const navigate = useNavigate()
   const room = useGameStore((s) => s.room)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
-  const { toggleReady, setLocalTeam, startGame, setTurnTimerSeconds } = useGameStore((s) => s.actions)
+  const { toggleReady, setLocalTeam, startGame, setTurnTimerSeconds, exitToHome } = useGameStore((s) => s.actions)
 
   useEffect(() => {
     if (room?.status === 'in-progress' && room.roomId === roomId) {
@@ -21,16 +21,34 @@ export function Lobby() {
     return <Navigate to="/" replace />
   }
 
+  const playMode = useGameStore((s) => s.playMode)
   const localPlayer = room.players.find((p) => p.id === localPlayerId)
   const allReady = room.players.length >= 4 && room.players.every((p) => p.isReady)
+  const isHost = localPlayer?.id === room.hostPlayerId
+  const humans = room.players.filter((p) => !p.isMock).length
 
   function playersOnTeam(teamId: TeamId) {
     return room!.players.filter((p) => p.teamId === teamId).sort((a, b) => a.seat - b.seat)
   }
 
+  function handleExit() {
+    exitToHome()
+    navigate('/', { replace: true })
+  }
+
   return (
     <div className="felt-bg min-h-screen px-4 py-10 text-white">
       <div className="mx-auto max-w-3xl">
+        <div className="mb-6 flex justify-start">
+          <button
+            type="button"
+            onClick={handleExit}
+            className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-sm font-semibold text-white/70 transition hover:border-red-400/40 hover:bg-red-500/20 hover:text-white"
+          >
+            ← Exit to home
+          </button>
+        </div>
+
         <div className="mb-8 flex flex-col items-center gap-2 text-center">
           <span className="text-xs font-semibold uppercase tracking-widest text-white/50">
             Room Code — share with friends
@@ -122,12 +140,20 @@ export function Lobby() {
 
           <button
             type="button"
-            disabled={!allReady}
+            disabled={!allReady || (playMode === 'online' && !isHost)}
             onClick={startGame}
             className="w-full max-w-xs rounded-lg bg-emerald-500 px-4 py-2.5 font-semibold text-white shadow transition enabled:hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Start Game {allReady ? '' : `(${room.players.filter((p) => p.isReady).length}/4 ready)`}
+            {playMode === 'online' && !isHost
+              ? 'Waiting for host to start…'
+              : `Start Game ${allReady ? '' : `(${room.players.filter((p) => p.isReady).length}/4 ready)`}`}
           </button>
+          {playMode === 'online' && (
+            <p className="text-center text-xs text-white/45">
+              Online lobby · {humans}/4 humans joined · share code{' '}
+              <span className="font-semibold text-yellow-300/90">{room.roomId}</span>
+            </p>
+          )}
         </div>
       </div>
     </div>

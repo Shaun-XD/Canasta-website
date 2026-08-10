@@ -3,35 +3,55 @@ import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import { Card } from '../components/Card'
 import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS } from '../types/game'
+import { getSocketUrl } from '../lib/socket'
 
 export function Landing() {
   const navigate = useNavigate()
   const createRoom = useGameStore((s) => s.actions.createRoom)
   const joinRoom = useGameStore((s) => s.actions.joinRoom)
+  const createRoomOnline = useGameStore((s) => s.actions.createRoomOnline)
+  const joinRoomOnline = useGameStore((s) => s.actions.joinRoomOnline)
 
   const [name, setName] = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [mode, setMode] = useState<'create' | 'join'>('create')
+  const [playMode, setPlayMode] = useState<'online' | 'solo'>('online')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
   const [targetScore, setTargetScore] = useState(String(DEFAULT_TARGET_SCORE))
   const [turnTimerSeconds, setTurnTimerSeconds] = useState(String(DEFAULT_TURN_TIMER_SECONDS))
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!name.trim()) {
       setError('Enter your name first.')
       return
     }
     const parsedTarget = Number(targetScore)
     const parsedTimer = Number(turnTimerSeconds)
-    const roomId = createRoom(
-      name.trim(),
-      Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : DEFAULT_TARGET_SCORE,
-      Number.isFinite(parsedTimer) && parsedTimer >= 10 ? parsedTimer : DEFAULT_TURN_TIMER_SECONDS,
-    )
-    navigate(`/lobby/${roomId}`)
+    const target =
+      Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : DEFAULT_TARGET_SCORE
+    const timer =
+      Number.isFinite(parsedTimer) && parsedTimer >= 10 ? parsedTimer : DEFAULT_TURN_TIMER_SECONDS
+
+    if (playMode === 'solo') {
+      const roomId = createRoom(name.trim(), target, timer)
+      navigate(`/lobby/${roomId}`)
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      const roomId = await createRoomOnline(name.trim(), target, timer)
+      navigate(`/lobby/${roomId}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reach the game server.')
+    } finally {
+      setBusy(false)
+    }
   }
 
-  function handleJoin() {
+  async function handleJoin() {
     if (!name.trim()) {
       setError('Enter your name first.')
       return
@@ -40,8 +60,23 @@ export function Landing() {
       setError('Enter a room code to join.')
       return
     }
-    joinRoom(joinCode.trim(), name.trim())
-    navigate(`/lobby/${joinCode.trim().toUpperCase()}`)
+
+    if (playMode === 'solo') {
+      joinRoom(joinCode.trim(), name.trim())
+      navigate(`/lobby/${joinCode.trim().toUpperCase()}`)
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      await joinRoomOnline(joinCode.trim(), name.trim())
+      navigate(`/lobby/${joinCode.trim().toUpperCase()}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not join room.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -77,6 +112,27 @@ export function Landing() {
         <div className="mb-4 flex rounded-lg bg-white/5 p-1">
           <button
             type="button"
+            onClick={() => setPlayMode('online')}
+            className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
+              playMode === 'online' ? 'bg-emerald-400 text-emerald-950' : 'text-white/70 hover:text-white'
+            }`}
+          >
+            Online
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlayMode('solo')}
+            className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
+              playMode === 'solo' ? 'bg-emerald-400 text-emerald-950' : 'text-white/70 hover:text-white'
+            }`}
+          >
+            Solo (bots)
+          </button>
+        </div>
+
+        <div className="mb-4 flex rounded-lg bg-white/5 p-1">
+          <button
+            type="button"
             onClick={() => setMode('create')}
             className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
               mode === 'create' ? 'bg-yellow-400 text-emerald-950' : 'text-white/70 hover:text-white'
@@ -108,7 +164,9 @@ export function Landing() {
               onChange={(e) => setTargetScore(e.target.value)}
               className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-white placeholder-white/40 outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300"
             />
-            <p className="mt-1 text-[11px] text-white/40">Default {DEFAULT_TARGET_SCORE}. First team to reach this wins the match.</p>
+            <p className="mt-1 text-[11px] text-white/40">
+              Default {DEFAULT_TARGET_SCORE}. First team to reach this wins the match.
+            </p>
 
             <label className="mb-1 mt-4 block text-xs font-semibold uppercase tracking-wide text-white/60">
               Turn timer (seconds)
@@ -122,7 +180,8 @@ export function Landing() {
               className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-white placeholder-white/40 outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300"
             />
             <p className="mt-1 text-[11px] text-white/40">
-              Default {DEFAULT_TURN_TIMER_SECONDS}s. Applies to every player; a turn auto-ends if it runs out.
+              Default {DEFAULT_TURN_TIMER_SECONDS}s. Applies to every player; a turn auto-ends if it
+              runs out.
             </p>
           </div>
         )}
@@ -144,16 +203,23 @@ export function Landing() {
 
         <button
           type="button"
-          onClick={mode === 'create' ? handleCreate : handleJoin}
-          className="w-full rounded-lg bg-yellow-400 py-2.5 font-semibold text-emerald-950 shadow transition hover:bg-yellow-300 active:scale-[0.99]"
+          disabled={busy}
+          onClick={() => void (mode === 'create' ? handleCreate() : handleJoin())}
+          className="w-full rounded-lg bg-yellow-400 py-2.5 font-semibold text-emerald-950 shadow transition hover:bg-yellow-300 active:scale-[0.99] disabled:opacity-60"
         >
-          {mode === 'create' ? 'Create Room' : 'Join Room'}
+          {busy ? 'Connecting…' : mode === 'create' ? 'Create Room' : 'Join Room'}
         </button>
+
+        {playMode === 'online' && (
+          <p className="mt-3 text-center text-[11px] text-white/35">
+            Server: <span className="text-white/55">{getSocketUrl()}</span>
+          </p>
+        )}
       </div>
 
       <p className="mt-8 max-w-md text-center text-xs text-white/40">
-        Full Rajasthani Canasta rules engine — Sets & Sequences, wild-card limits, the
-        Slide, Pozzetto, and Show. See README for details.
+        Online mode syncs four real devices through the FastAPI backend. Solo fills empty seats with
+        bots for local practice.
       </p>
     </div>
   )
