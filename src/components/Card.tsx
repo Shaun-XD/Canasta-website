@@ -9,6 +9,9 @@ import { RED_SUITS, SUIT_SYMBOLS } from '../types/game'
  * procedurally from this single component using plain SVG - there are no
  * external image assets. See `assets/MANIFEST.json` for the asset
  * inventory/licensing note.
+ *
+ * Face layout prioritizes a large top-left rank + suit index so fanned /
+ * overlapped hands stay readable on mobile (especially for elderly players).
  */
 
 export interface CardProps {
@@ -96,14 +99,31 @@ function JokerFace() {
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width="100%" height="100%">
       <rect width={CARD_W} height={CARD_H} rx="8" fill="#ffffff" stroke="#1f2937" strokeWidth="1.5" />
-      <text x="8" y="18" fontSize="11" fontWeight="700" fill="#7c3aed" fontFamily="system-ui, sans-serif">
-        JOKER
+      {/* Large top-left label so overlapped hands stay readable on mobile */}
+      <text
+        x={CORNER_X}
+        y={28}
+        fontSize="18"
+        fontWeight="800"
+        fill="#7c3aed"
+        fontFamily="system-ui, -apple-system, sans-serif"
+        textAnchor="middle"
+      >
+        J
       </text>
-      <text x="92" y="132" fontSize="11" fontWeight="700" fill="#7c3aed" textAnchor="end" fontFamily="system-ui, sans-serif" transform={`rotate(180 92 132)`}>
-        JOKER
+      <text
+        x={CORNER_X}
+        y={50}
+        fontSize="11"
+        fontWeight="800"
+        fill="#7c3aed"
+        fontFamily="system-ui, -apple-system, sans-serif"
+        textAnchor="middle"
+      >
+        OK
       </text>
-      <g transform={`translate(${CARD_W / 2}, ${CARD_H / 2})`}>
-        <circle r="26" fill="#7c3aed" opacity="0.12" />
+      <g transform={`translate(${CARD_W / 2 + 8}, ${CARD_H / 2 + 8})`}>
+        <circle r="24" fill="#7c3aed" opacity="0.12" />
         {/* simple jester-hat glyph, original geometric shape */}
         <path
           d="M -18 10 L -18 -6 L -6 4 L 0 -14 L 6 4 L 18 -6 L 18 10 Z"
@@ -118,19 +138,63 @@ function JokerFace() {
   )
 }
 
-function CornerLabel({ rank, suit, x, y, rotate }: { rank: Rank; suit: Suit; x: number; y: number; rotate?: boolean }) {
+/**
+ * Oversized top-left (and mirrored bottom-right) rank + suit.
+ * Sized for elderly / mobile readability when hands are fanned and only
+ * the left strip of each card is visible.
+ */
+function CornerLabel({
+  rank,
+  suit,
+  x,
+  y,
+  rotate,
+  size = 'lg',
+}: {
+  rank: Rank
+  suit: Suit
+  x: number
+  y: number
+  rotate?: boolean
+  size?: 'lg' | 'sm'
+}) {
   const color = RED_SUITS.includes(suit) ? '#dc2626' : '#111827'
+  const isTen = rank === '10'
+  const rankSize = size === 'lg' ? (isTen ? 26 : 32) : isTen ? 12 : 14
+  const suitSize = size === 'lg' ? 26 : 13
+  const suitGap = size === 'lg' ? (isTen ? 26 : 30) : 13
+
   return (
     <g transform={rotate ? `rotate(180 ${x} ${y})` : undefined}>
-      <text x={x} y={y} fontSize="14" fontWeight="700" fill={color} fontFamily="system-ui, sans-serif" textAnchor="middle">
+      <text
+        x={x}
+        y={y}
+        fontSize={rankSize}
+        fontWeight="800"
+        fill={color}
+        fontFamily="system-ui, -apple-system, sans-serif"
+        textAnchor="middle"
+        dominantBaseline="alphabetic"
+      >
         {rank}
       </text>
-      <text x={x} y={y + 14} fontSize="13" fill={color} textAnchor="middle">
+      <text
+        x={x}
+        y={y + suitGap}
+        fontSize={suitSize}
+        fontWeight="700"
+        fill={color}
+        textAnchor="middle"
+        dominantBaseline="alphabetic"
+      >
         {SUIT_SYMBOLS[suit]}
       </text>
     </g>
   )
 }
+
+const CORNER_X = 22
+const CORNER_Y = 34
 
 function NumberFace({ rank, suit }: { rank: Rank; suit: Suit }) {
   const count = rankToPipCount(rank)
@@ -140,43 +204,59 @@ function NumberFace({ rank, suit }: { rank: Rank; suit: Suit }) {
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width="100%" height="100%">
       <rect width={CARD_W} height={CARD_H} rx="8" fill="#ffffff" stroke="#1f2937" strokeWidth="1.5" />
-      <CornerLabel rank={rank} suit={suit} x={16} y={22} />
-      <CornerLabel rank={rank} suit={suit} x={CARD_W - 16} y={CARD_H - 22} rotate />
-      {layout?.map(([fx, fy], i) => (
-        <text
-          key={i}
-          x={fx * CARD_W}
-          y={fy * CARD_H + 6}
-          textAnchor="middle"
-          fontSize="20"
-          fill={color}
-          transform={fy > 0.5 ? `rotate(180 ${fx * CARD_W} ${fy * CARD_H})` : undefined}
-        >
-          {SUIT_SYMBOLS[suit]}
-        </text>
-      ))}
+      <CornerLabel rank={rank} suit={suit} x={CORNER_X} y={CORNER_Y} size="lg" />
+      <CornerLabel rank={rank} suit={suit} x={CARD_W - CORNER_X} y={CARD_H - CORNER_Y} rotate size="sm" />
+      {layout?.map(([fx, fy], i) => {
+        // Nudge center pips slightly right/down so they clear the large TL index
+        const px = fx * CARD_W + (fx < 0.45 ? 6 : 0)
+        const py = fy * CARD_H + (fy < 0.4 ? 10 : 0)
+        return (
+          <text
+            key={i}
+            x={px}
+            y={py + 5}
+            textAnchor="middle"
+            fontSize="16"
+            fill={color}
+            opacity="0.92"
+            transform={fy > 0.5 ? `rotate(180 ${px} ${py})` : undefined}
+          >
+            {SUIT_SYMBOLS[suit]}
+          </text>
+        )
+      })}
     </svg>
   )
 }
 
 function FaceCard({ rank, suit }: { rank: 'J' | 'Q' | 'K'; suit: Suit }) {
   const color = RED_SUITS.includes(suit) ? '#dc2626' : '#111827'
+  // Ornament sits to the right so the oversized TL index stays unobstructed
+  const ornamentX = CARD_W / 2 + 12
+  const ornamentY = CARD_H / 2 + 4
   return (
     <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} width="100%" height="100%">
       <rect width={CARD_W} height={CARD_H} rx="8" fill="#ffffff" stroke="#1f2937" strokeWidth="1.5" />
-      <CornerLabel rank={rank} suit={suit} x={16} y={22} />
-      <CornerLabel rank={rank} suit={suit} x={CARD_W - 16} y={CARD_H - 22} rotate />
-      <rect x="14" y="30" width={CARD_W - 28} height={CARD_H - 60} rx="6" fill="none" stroke={color} strokeWidth="1.5" opacity="0.5" />
-      <g transform={`translate(${CARD_W / 2}, ${CARD_H / 2})`}>
-        <circle r="20" fill={color} opacity="0.1" />
-        <path d="M -14 8 L -14 -10 L -7 -2 L 0 -16 L 7 -2 L 14 -10 L 14 8 Z" fill={color} opacity="0.85" />
-        <text y="6" textAnchor="middle" fontSize="18" fontWeight="700" fill={color} fontFamily="Georgia, serif">
+      <CornerLabel rank={rank} suit={suit} x={CORNER_X} y={CORNER_Y} size="lg" />
+      <CornerLabel rank={rank} suit={suit} x={CARD_W - CORNER_X} y={CARD_H - CORNER_Y} rotate size="sm" />
+      <rect
+        x="42"
+        y="36"
+        width={CARD_W - 50}
+        height={CARD_H - 72}
+        rx="6"
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        opacity="0.45"
+      />
+      <g transform={`translate(${ornamentX}, ${ornamentY})`}>
+        <circle r="18" fill={color} opacity="0.1" />
+        <path d="M -12 7 L -12 -9 L -6 -2 L 0 -14 L 6 -2 L 12 -9 L 12 7 Z" fill={color} opacity="0.85" />
+        <text y="5" textAnchor="middle" fontSize="16" fontWeight="700" fill={color} fontFamily="Georgia, serif">
           {rank}
         </text>
       </g>
-      <text x={CARD_W / 2} y={CARD_H - 12} textAnchor="middle" fontSize="16" fill={color}>
-        {SUIT_SYMBOLS[suit]}
-      </text>
     </svg>
   )
 }
