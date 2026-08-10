@@ -347,6 +347,47 @@ function minMaxOrder(meld: Meld): { min: number; max: number } {
 }
 
 /**
+ * Whether extending a sequence to `order` with a wild would stay linear
+ * (no Ace wrap K-A-2). Ace already high ⇒ cannot open Ace-low below a 2;
+ * Ace already low ⇒ cannot open Ace-high above a King.
+ */
+function isLegalWildExtensionOrder(meld: Meld, order: number): boolean {
+  if (RANK_BY_ORDER[order] === undefined) return false
+  const { min, max } = minMaxOrder(meld)
+  const newMin = Math.min(min, order)
+  const newMax = Math.max(max, order)
+  if (newMin <= ACE_LOW_ORDER && newMax >= ACE_HIGH_ORDER) return false
+  return true
+}
+
+/**
+ * Open ends where a fresh wild may sit. Prefer the high end when both are
+ * open; when Ace (or any ceiling) caps the high end, use the low end.
+ *
+ * TODO(rules): Ace-capped wild auto-fallback to the low end — product owner
+ * confirmed: if Ace already tops the run, a wild (Joker / non-natural 2)
+ * must play at the bottom automatically rather than being rejected for
+ * trying to go above Ace. Flagged for ruleset write-up.
+ */
+function pickWildExtensionOrder(
+  meld: Meld,
+  preferredEdge?: 'top' | 'bottom',
+): number | null {
+  const { min, max } = minMaxOrder(meld)
+  const orderTop = max + 1
+  const orderBottom = min - 1
+  const topOk = isLegalWildExtensionOrder(meld, orderTop)
+  const bottomOk = isLegalWildExtensionOrder(meld, orderBottom)
+
+  if (preferredEdge === 'bottom' && bottomOk) return orderBottom
+  if (preferredEdge === 'top' && topOk) return orderTop
+  // Auto: high end first, fall back to low when capped (e.g. …Q-K-A).
+  if (topOk) return orderTop
+  if (bottomOk) return orderBottom
+  return null
+}
+
+/**
  * Determine what would happen if `card` were appended to a Sequence, without
  * mutating anything. Used both by `appendToSequence` and by UI-facing
  * "can I play this card" checks.
@@ -383,8 +424,8 @@ export function canAppendToSequence(meld: Meld, card: CardModel): boolean {
   }
 
   if (card.rank === 'JOKER' || card.rank === '2') {
-    // Generic wild extension at either edge, subject to the 1-wild limit.
-    if (meld.wildCount < 1) return true
+    // Generic wild extension at either open end, subject to the 1-wild limit.
+    if (meld.wildCount < 1 && pickWildExtensionOrder(meld) !== null) return true
   }
 
   return false
@@ -445,34 +486,40 @@ export function appendToSequence(
       const naturalized = [...meld.slots]
       naturalized[slotIndex] = { card, slotRank: card.rank, isWildFill: false }
 
-      const newOrder = slideEdge === 'top' ? max + 1 : min - 1
+      // Prefer the caller's edge when legal; otherwise fall back so an Ace-
+      // capped high end does not reject the Slide.
+      const preferred = slideEdge === 'top' ? max + 1 : min - 1
+      const fallback = slideEdge === 'top' ? min - 1 : max + 1
+      const newOrder = isLegalWildExtensionOrder(meld, preferred)
+        ? preferred
+        : isLegalWildExtensionOrder(meld, fallback)
+          ? fallback
+          : null
+      if (newOrder === null) {
+        return { ok: false, error: 'Cannot slide past the end of the rank range.' }
+      }
       const newSlotRank = RANK_BY_ORDER[newOrder]
       if (!newSlotRank) {
         return { ok: false, error: 'Cannot slide past the end of the rank range.' }
       }
       const wildSlot: MeldSlot = { card: displacedWild, slotRank: newSlotRank, isWildFill: true }
-      const slots = slideEdge === 'top' ? [...naturalized, wildSlot] : [wildSlot, ...naturalized]
+      const slots = newOrder === max + 1 ? [...naturalized, wildSlot] : [wildSlot, ...naturalized]
       const next: Meld = { ...meld, slots }
       recomputeMeldFlags(next)
       return { ok: true, meld: next }
     }
   }
 
-  // Generic wild extension (Joker, or an off-suit/duplicate 2 used purely as wild).
+  // Generic wild extension (Joker, or an off-suit / non-natural 2 used as wild).
+  // If Ace already caps the high end, automatically place the wild at the
+  // low end (e.g. A-K-Q-J + 2♦ → wild below J), rather than assuming "above Ace".
   if (meld.wildCount < 1) {
-    const orderTop = max + 1
-    const orderBottom = min - 1
-    const slotRank = RANK_BY_ORDER[orderTop] ?? RANK_BY_ORDER[orderBottom]
-    if (slotRank) {
-      // Both edges are legal for a fresh wild extension (nothing is being
-      // displaced); default to the top edge unless the caller specifies
-      // otherwise via slideEdge.
-      const useBottom = slideEdge === 'bottom' && RANK_BY_ORDER[orderBottom] !== undefined
-      const order = useBottom ? orderBottom : orderTop
+    const order = pickWildExtensionOrder(meld, slideEdge)
+    if (order !== null) {
       const finalSlotRank = RANK_BY_ORDER[order]
       if (finalSlotRank) {
         const slot: MeldSlot = { card, slotRank: finalSlotRank, isWildFill: true }
-        const slots = order === orderTop ? [...meld.slots, slot] : [slot, ...meld.slots]
+        const slots = order === max + 1 ? [...meld.slots, slot] : [slot, ...meld.slots]
         const next: Meld = { ...meld, slots }
         recomputeMeldFlags(next)
         return { ok: true, meld: next }

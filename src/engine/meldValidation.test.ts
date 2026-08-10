@@ -476,6 +476,54 @@ describe('moveWildInMeld on Sequences (reinterpret natural 2 as wild)', () => {
   })
 })
 
+describe('append wild onto Ace-high-capped sequences', () => {
+  it('places an off-suit 2 as a wild below Jack on an A-K-Q-J run (not above Ace)', () => {
+    const built = buildSequence(
+      [c('J', 'spades'), c('Q', 'spades'), c('K', 'spades'), c('A', 'spades')],
+      'team-a',
+    )
+    if (!built.ok) throw new Error('setup failed')
+    expect(built.meld.slots.map((s) => s.slotRank)).toEqual(['J', 'Q', 'K', 'A'])
+
+    const twoDiamonds = c('2', 'diamonds')
+    expect(canAppendToMeld(built.meld, twoDiamonds)).toBe(true)
+
+    // Even when the caller prefers "top" (UI / Top Touch default), Ace caps
+    // that end so the wild must fall back to the low end.
+    const appended = appendToMeld(built.meld, twoDiamonds, 'top')
+    expect(appended.ok).toBe(true)
+    if (!appended.ok) return
+    expect(appended.meld.slots.map((s) => s.slotRank)).toEqual(['10', 'J', 'Q', 'K', 'A'])
+    expect(appended.meld.slots[0].isWildFill).toBe(true)
+    expect(appended.meld.slots[0].card.rank).toBe('2')
+    expect(appended.meld.wildCount).toBe(1)
+  })
+
+  it('places a Joker below Jack on an A-K-Q-J run when Ace caps the high end', () => {
+    const built = buildSequence(
+      [c('J', 'hearts'), c('Q', 'hearts'), c('K', 'hearts'), c('A', 'hearts')],
+      'team-a',
+    )
+    if (!built.ok) throw new Error('setup failed')
+    const appended = appendToMeld(built.meld, joker())
+    expect(appended.ok).toBe(true)
+    if (!appended.ok) return
+    expect(appended.meld.slots[0].slotRank).toBe('10')
+    expect(appended.meld.slots[0].isWildFill).toBe(true)
+  })
+
+  it('still prefers extending upward when the high end is open', () => {
+    const built = buildSequence([c('J', 'clubs'), c('Q', 'clubs'), c('K', 'clubs')], 'team-a')
+    if (!built.ok) throw new Error('setup failed')
+    const appended = appendToMeld(built.meld, c('2', 'diamonds'))
+    expect(appended.ok).toBe(true)
+    if (!appended.ok) return
+    // High end open → wild takes Ace slot above King.
+    expect(appended.meld.slots.map((s) => s.slotRank)).toEqual(['J', 'Q', 'K', 'A'])
+    expect(appended.meld.slots[3].isWildFill).toBe(true)
+  })
+})
+
 describe('the Slide mechanic', () => {
   it('requests a slide edge choice, then moves the displaced wild to the chosen edge', () => {
     const built = buildSequence([c('5', 'diamonds'), joker(), c('7', 'diamonds')], 'team-a')
