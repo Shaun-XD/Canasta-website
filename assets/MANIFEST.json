@@ -6,27 +6,22 @@
       "name": "Standard playing card faces (52 cards: 4 suits × 13 ranks) + 1 Joker",
       "type": "png (static files) + pdf compilation",
       "files": {
-        "directory": "assets/",
+        "directory": "public/cards/",
+        "urlPrefix": "/cards/",
         "pattern": "{ace,2–10,jack,queen,king}_of_{spades,hearts,diamonds,clubs}.png + joker.png",
         "count": 53,
         "pdf": "assets/full_deck.pdf (53 pages, one card per page)"
       },
-      "generation": "scripts/generate_card_faces.py — Pillow renderer. Layout: large top-left rank with suit beneath, mirrored 180° bottom-right, single dominant center suit. Style: ultra-bold sans ranks (Segoe UI Black), solid suit glyphs, off-white face, black/red palette.",
+      "generation": "scripts/generate_card_faces.py — Pillow renderer. Layout: large top-left rank with suit beneath, mirrored 180° bottom-right, single dominant center suit. No drawn border stroke (soft rounded mask only).",
+      "runtime": "src/components/Card.tsx loads faces via <img src=\"/cards/…\">; card back remains inline SVG.",
       "order": "spades A–K, hearts A–K, diamonds A–K, clubs A–K, then joker",
-      "source": "custom, generated in-project",
-      "license": "original work, no third-party assets used, free to use"
-    },
-    {
-      "name": "Card faces (runtime SVG fallback)",
-      "type": "svg (generated via React component)",
-      "generation": "src/components/Card.tsx — still renders faces on demand from {rank, suit} for in-app play; the PNG set in assets/ is the print/exportable face pack.",
       "source": "custom, generated in-project",
       "license": "original work, no third-party assets used, free to use"
     },
     {
       "name": "Card back design",
       "type": "svg (generated via React component)",
-      "generation": "src/components/Card.tsx — CardBackFace() renders an original diamond/cross-hatch pattern with a simple monogram.",
+      "generation": "src/components/Card.tsx — CardBackFace()",
       "source": "custom, generated in-project",
       "license": "original work, no third-party assets used, free to use"
     },

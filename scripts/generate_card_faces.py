@@ -19,7 +19,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 # --- geometry (poker ratio ≈ 2.5 : 3.5) ---
 W, H = 750, 1050
-CORNER_RADIUS = 42
 MARGIN = 48
 
 # --- palette (from reference) ---
@@ -27,11 +26,13 @@ FACE = (250, 248, 244, 255)
 BLACK = (17, 17, 17, 255)
 RED = (220, 38, 38, 255)  # warm vibrant red
 JOKER = (109, 40, 217, 255)  # distinct purple for the joker
-STROKE = (31, 41, 55, 255)
+# Soft muted outline lives in CSS: Card.tsx → `border-[#5b7c99]`
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "assets"
-PDF_PATH = OUT_DIR / "full_deck.pdf"
+# Served by Vite from /cards/*.png
+OUT_DIR = ROOT / "public" / "cards"
+# Review / print compilation stays under assets/
+PDF_PATH = ROOT / "assets" / "full_deck.pdf"
 
 SUITS = ("spades", "hearts", "diamonds", "clubs")
 RANKS = (
@@ -173,23 +174,15 @@ def draw_suit(
 
 
 def rounded_card_base() -> Image.Image:
-    """Opaque card face with transparent outside the rounded rectangle."""
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    mask = Image.new("L", (W, H), 0)
-    mdraw = ImageDraw.Draw(mask)
-    mdraw.rounded_rectangle([0, 0, W - 1, H - 1], radius=CORNER_RADIUS, fill=255)
-    face = Image.new("RGBA", (W, H), FACE)
-    img.paste(face, mask=mask)
-    # subtle edge stroke inside the card
-    draw = ImageDraw.Draw(img)
-    inset = 2
-    draw.rounded_rectangle(
-        [inset, inset, W - 1 - inset, H - 1 - inset],
-        radius=CORNER_RADIUS - 1,
-        outline=STROKE,
-        width=3,
-    )
-    return img
+    """
+    Fully opaque rectangular face (no transparent corners).
+
+    Transparent rounded corners let cards underneath show through in meld
+    stacks, which turns the side borders into a fake straight blue line at
+    each overlap. Rounding + the thin blue outline are applied in CSS on
+    `Card.tsx` so they always follow the clipped shape.
+    """
+    return Image.new("RGBA", (W, H), FACE)
 
 
 def draw_corner_index(
@@ -205,9 +198,9 @@ def draw_corner_index(
     draw = ImageDraw.Draw(layer)
 
     is_ten = rank == "10"
-    # 2× previous corner index sizes for mobile / elderly readability
+    # Corner rank / suit sizes — fiddle these (suit aims ~same visual size as rank)
     rank_size = 236 if is_ten else 296
-    suit_size = 156
+    suit_size = 210  # was 156; ~1.4× so it reads closer to the rank glyph
     font = load_rank_font(rank_size)
 
     # Anchor block near top-left (shifted out a bit to fit the larger glyphs)
@@ -223,7 +216,7 @@ def draw_corner_index(
     draw.text((rank_x, rank_y), rank, font=font, fill=color)
 
     # Suit directly beneath the rank
-    suit_cy = ay + th + suit_size * 0.55
+    suit_cy = ay + th + suit_size * 0.48
     draw_suit(draw, ax, suit_cy, suit_size, suit, color)
 
     if rotate:
@@ -281,7 +274,7 @@ def make_joker() -> Image.Image:
         ax, ay = MARGIN + 140, MARGIN + 8
         d.text((ax - 140, ay), "JOKER", font=font_big, fill=color)
         # stand-in "suit" mark beneath the rank word
-        draw_suit(d, ax, ay + 210, 104, "diamonds", color)
+        draw_suit(d, ax, ay + 210, 150, "diamonds", color)
         if rotate:
             layer = layer.rotate(180, expand=False)
         img.alpha_composite(layer)
