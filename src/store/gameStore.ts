@@ -8,8 +8,9 @@ import type {
   Team,
   TeamId,
 } from '../types/game'
-import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam, type MaxPlayers } from '../types/game'
+import { seedRemotePlayerFlights } from '../lib/seedRemoteFlights'
 import { buildShuffledDeck, dealHands, sortHand } from '../lib/deck'
+import { seedRemotePlayerFlights } from '../lib/seedRemoteFlights'
 import { initialPozzettoState, shouldClaimPozzettoOnDiscard, shouldClaimPozzettoOnMeldEmpty } from '../engine/pozzetto'
 import { evaluateShowEligibility } from '../engine/showEligibility'
 import { EMPTY_HAND_FOUL_PENALTY, isIllegalEmptyHand } from '../engine/emptyHandFoul'
@@ -371,6 +372,16 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
             seedFlipOriginIfUnknown(id, stockRect)
           }
         }
+      }
+
+      if (prev.game) {
+        seedRemotePlayerFlights({
+          prevGame: prev.game,
+          prevRoom: prev.room,
+          nextGame: game,
+          nextRoom: room,
+          localPlayerId: localId,
+        })
       }
 
       const handIds = new Set(localId ? (game.hands[localId] ?? []).map((c) => c.id) : [])
