@@ -79,18 +79,6 @@ const EMPTY_SELECTION = {
   selectedDiscardIds: [] as string[],
 }
 
-function isTransientOnlineError(error: string | undefined): boolean {
-  const lower = (error || '').toLowerCase()
-  return (
-    lower.includes('not in a room') ||
-    lower.includes('timed out') ||
-    lower.includes('timeout') ||
-    lower.includes('did not respond') ||
-    lower.includes('lost connection') ||
-    lower.includes('reconnecting')
-  )
-}
-
 async function runOnlineAction(
   get: () => GameStoreState,
   set: (partial: Partial<GameStoreState>) => void,
@@ -99,13 +87,27 @@ async function runOnlineAction(
 ): Promise<boolean> {
   try {
     let ack = await run()
-    if (!ack.ok && isTransientOnlineError(ack.error)) {
+    // Only re-bind + retry when the socket lost its room mapping. Never retry
+    // on timeout — the action may already have succeeded (e.g. stock draw),
+    // and a second draw fails with "Already drew this turn".
+    if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
       const rejoined = await get().actions.rejoinOnlineSession()
       if (rejoined) ack = await run()
     }
     if (!ack.ok) {
       set({ lastActionError: ack.error || failMessage })
       return false
+    }
+    // Prefer the ack payload so stock draw (and other actions) update even if
+    // the async lobby broadcast is delayed or the ack races ahead of it.
+    if (ack.game !== undefined || ack.room) {
+      applyOnlineSnapshot({
+        set,
+        get,
+        room: ack.room,
+        game: ack.game === undefined ? undefined : ack.game,
+        playerId: ack.playerId,
+      })
     }
     return true
   } catch (err) {
@@ -131,6 +133,121 @@ function clearOnlineSession() {
 }
 
 let onlineSyncBound = false
+/** Room:state held until the matching game:state so meld/hand FLIP stays coherent. */
+let pendingOnlineRoom: RoomState | null = null
+
+function normalizeOnlineRoom(room: RoomState): RoomState {
+  return { ...room, maxPlayers: normalizeMaxPlayers(room.maxPlayers) }
+}
+
+/**
+ * Apply an online room/game snapshot (from socket push or action ack).
+ * Seeds stock-draw FLIP origins and remote seat flights before React commits.
+ */
+function applyOnlineSnapshot(opts: {
+  set: (partial: Partial<GameStoreState>) => void
+  get: () => GameStoreState
+  room?: RoomState | null
+  game?: GameState | null
+  playerId?: string
+}): void {
+  const { set, get, playerId } = opts
+  const prev = get()
+  const localId = playerId || prev.localPlayerId
+
+  let room: RoomState | null | undefined = opts.room
+  if (room) {
+    room = normalizeOnlineRoom(room)
+  } else if (opts.game !== undefined) {
+    room = pendingOnlineRoom ?? prev.room
+    pendingOnlineRoom = null
+  }
+
+  if (opts.game === undefined) {
+    if (room) set({ room, ...(playerId ? { localPlayerId: playerId } : {}), playMode: 'online' })
+    return
+  }
+
+  const game = opts.game
+  if (!game) {
+    set({
+      ...(room ? { room } : {}),
+      game: null,
+      ...(playerId ? { localPlayerId: playerId } : {}),
+      playMode: 'online',
+      ...EMPTY_SELECTION,
+    })
+    return
+  }
+
+  // Skip no-op re-applies (ack + broadcast of the same state).
+  if (
+    prev.game &&
+    prev.game.turn.turnNumber === game.turn.turnNumber &&
+    prev.game.turn.phase === game.turn.phase &&
+    prev.game.turn.activePlayerId === game.turn.activePlayerId &&
+    prev.game.lastPlay?.at === game.lastPlay?.at &&
+    prev.game.lastAcquired?.at === game.lastAcquired?.at &&
+    (prev.game.hands[localId ?? '']?.length ?? 0) === (game.hands[localId ?? '']?.length ?? 0) &&
+    prev.game.stock.length === game.stock.length &&
+    prev.game.discardPile.cards.length === game.discardPile.cards.length
+  ) {
+    if (room && room !== prev.room) {
+      set({ room, playMode: 'online', ...(playerId ? { localPlayerId: playerId } : {}) })
+    }
+    return
+  }
+
+  // Stock is a generic face-down card (no per-id AnimatedCard). Seed the
+  // drawn card's origin from the stock pile BEFORE React mounts it in the
+  // hand — online draw is async so Table cannot seed at click time.
+  if (
+    game.lastAcquired &&
+    game.lastAcquired.at !== prev.game?.lastAcquired?.at &&
+    game.lastAcquired.playerId === localId
+  ) {
+    const stockRect = getFlipAnchorRect('stock')
+    if (stockRect) {
+      for (const id of game.lastAcquired.cardIds) {
+        seedFlipOriginIfUnknown(id, stockRect)
+      }
+    }
+  }
+
+  if (prev.game) {
+    seedRemotePlayerFlights({
+      prevGame: prev.game,
+      prevRoom: prev.room,
+      nextGame: game,
+      nextRoom: room ?? prev.room,
+      localPlayerId: localId,
+    })
+  }
+
+  const handIds = new Set(localId ? (game.hands[localId] ?? []).map((c) => c.id) : [])
+  const localTeam = (room ?? prev.room)?.teams.find((t) => localId && t.playerIds.includes(localId))
+  const meldStillExists = !!(
+    prev.selectedMeldId && localTeam?.melds.some((m) => m.id === prev.selectedMeldId)
+  )
+  const turnChanged =
+    !!prev.game &&
+    (game.turn.activePlayerId !== prev.game.turn.activePlayerId ||
+      game.turn.phase !== prev.game.turn.phase ||
+      game.turn.turnNumber !== prev.game.turn.turnNumber)
+
+  const prunedSelected = turnChanged ? [] : prev.selectedCardIds.filter((id) => handIds.has(id))
+  const clearTopTouch = turnChanged || game.turn.phase !== 'draw'
+
+  set({
+    ...(room ? { room } : {}),
+    game,
+    playMode: 'online',
+    ...(playerId ? { localPlayerId: playerId } : {}),
+    selectedCardIds: prunedSelected,
+    selectedMeldId: turnChanged || !meldStillExists ? null : prev.selectedMeldId,
+    ...(turnChanged || clearTopTouch ? { topTouchInProgress: false, selectedDiscardIds: [] } : {}),
+  })
+}
 
 /** Per-action pacing for mock/bot turns — longer than the slow bot flight. */
 const BOT_ACTION_MS = 1400
@@ -338,11 +455,10 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
   // Melds live on room, hands/discard on game. Applying room:state one tick
   // before game:state mounts the same card id in a meld AND the hand, which
   // inverts FLIP (teleport to meld, then fly back to the hand).
-  let pendingOnlineRoom: RoomState | null = null
 
   bindSocketStoreHandlers({
     onRoomState: (room, playerId) => {
-      const normalized = { ...room, maxPlayers: normalizeMaxPlayers(room.maxPlayers) }
+      const normalized = normalizeOnlineRoom(room)
       const { game } = get()
       const defer =
         normalized.status === 'in-progress' || normalized.status === 'round-end' || !!game
@@ -354,75 +470,7 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
       set({ room: normalized, localPlayerId: playerId, playMode: 'online' })
     },
     onGameState: (game, playerId) => {
-      const prev = get()
-      const localId = playerId || prev.localPlayerId
-      const room = pendingOnlineRoom ?? prev.room
-      pendingOnlineRoom = null
-
-      if (!game) {
-        set({
-          ...(room ? { room } : {}),
-          game: null,
-          ...(playerId ? { localPlayerId: playerId } : {}),
-          playMode: 'online',
-          ...EMPTY_SELECTION,
-        })
-        return
-      }
-
-      // Stock is a generic face-down card (no per-id AnimatedCard). Seed the
-      // drawn card's origin from the stock pile BEFORE React mounts it in the
-      // hand — online draw is async so Table cannot seed at click time.
-      if (
-        game.lastAcquired &&
-        game.lastAcquired.at !== prev.game?.lastAcquired?.at &&
-        game.lastAcquired.playerId === localId
-      ) {
-        const stockRect = getFlipAnchorRect('stock')
-        if (stockRect) {
-          for (const id of game.lastAcquired.cardIds) {
-            seedFlipOriginIfUnknown(id, stockRect)
-          }
-        }
-      }
-
-      if (prev.game) {
-        seedRemotePlayerFlights({
-          prevGame: prev.game,
-          prevRoom: prev.room,
-          nextGame: game,
-          nextRoom: room,
-          localPlayerId: localId,
-        })
-      }
-
-      const handIds = new Set(localId ? (game.hands[localId] ?? []).map((c) => c.id) : [])
-      const localTeam = room?.teams.find((t) => localId && t.playerIds.includes(localId))
-      const meldStillExists = !!(
-        prev.selectedMeldId && localTeam?.melds.some((m) => m.id === prev.selectedMeldId)
-      )
-      const turnChanged =
-        !!prev.game &&
-        (game.turn.activePlayerId !== prev.game.turn.activePlayerId ||
-          game.turn.phase !== prev.game.turn.phase ||
-          game.turn.turnNumber !== prev.game.turn.turnNumber)
-
-      const prunedSelected = turnChanged
-        ? []
-        : prev.selectedCardIds.filter((id) => handIds.has(id))
-      const clearTopTouch = turnChanged || game.turn.phase !== 'draw'
-
-      set({
-        ...(room ? { room } : {}),
-        game,
-        playMode: 'online',
-        ...(playerId ? { localPlayerId: playerId } : {}),
-        selectedCardIds: prunedSelected,
-        selectedMeldId: turnChanged || !meldStillExists ? null : prev.selectedMeldId,
-        ...(turnChanged || clearTopTouch
-          ? { topTouchInProgress: false, selectedDiscardIds: [] }
-          : {}),
-      })
+      applyOnlineSnapshot({ set, get, game, playerId })
     },
     onActionError: (error) => set({ lastActionError: error }),
     // After a socket reconnect the server loses CLIENTS[sid] — rebind via rejoin.

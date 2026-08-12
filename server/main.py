@@ -253,10 +253,20 @@ async def _player_action(sid: str, method: str, extra: dict[str, Any] | None = N
         if result.get("error"):
             await emit_error(sid, result["error"])
         room = result.get("room")
+        game = result.get("game")
+        pid = meta["playerId"]
         if room is not None:
-            asyncio.create_task(broadcast_state(meta["roomId"], room, result.get("game")))
+            # Fan-out to the lobby without blocking this ack. The acting client
+            # also receives sanitized state in the ack so stock draw / meld
+            # update immediately even if broadcast is delayed.
+            asyncio.create_task(broadcast_state(meta["roomId"], room, game))
         print(f"[action] {method} ok sid={sid}", flush=True)
-        return {"ok": True}
+        return {
+            "ok": True,
+            "playerId": pid,
+            "room": sanitize_room(room, pid) if room is not None else None,
+            "game": sanitize_game(game, pid) if room is not None else None,
+        }
     except Exception as exc:  # noqa: BLE001
         await emit_error(sid, str(exc))
         return {"ok": False, "error": str(exc)}
