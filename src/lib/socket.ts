@@ -49,15 +49,21 @@ export function disconnectSocket(): void {
   if (socket?.connected) socket.disconnect()
 }
 
-function emitAck<T = RoomAck>(event: string, payload?: unknown): Promise<T> {
+function emitAck(event: string, payload?: unknown): Promise<RoomAck> {
   const s = connectSocket()
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error('Server timeout — is the backend running?')), 12000)
-    s.timeout(10000).emit(event, payload ?? {}, (err: Error | null, res: T) => {
+  return new Promise((resolve) => {
+    const fail = (error: string) => resolve({ ok: false, error })
+    const timer = window.setTimeout(() => fail('Server timeout — is the backend running?'), 12000)
+    try {
+      s.timeout(10000).emit(event, payload ?? {}, (err: Error | null, res: RoomAck) => {
+        window.clearTimeout(timer)
+        if (err) fail(err.message || 'Request failed.')
+        else resolve(res ?? { ok: false, error: 'Empty server response.' })
+      })
+    } catch (err) {
       window.clearTimeout(timer)
-      if (err) reject(err)
-      else resolve(res)
-    })
+      fail(err instanceof Error ? err.message : 'Request failed.')
+    }
   })
 }
 
@@ -78,12 +84,12 @@ export async function socketRejoinRoom(opts: { roomId: string; playerId: string 
   return emitAck('room:rejoin', opts)
 }
 
-export function socketSetTeam(teamId: TeamId): void {
-  connectSocket().emit('room:setTeam', { teamId })
+export function socketSetTeam(teamId: TeamId): Promise<RoomAck> {
+  return emitAck('room:setTeam', { teamId })
 }
 
-export function socketSetSeat(seat: number): void {
-  connectSocket().emit('room:setSeat', { seat })
+export function socketSetSeat(seat: number): Promise<RoomAck> {
+  return emitAck('room:setSeat', { seat })
 }
 
 export function socketSetReady(ready?: boolean): Promise<RoomAck> {
@@ -98,8 +104,8 @@ export function socketSetMaxPlayers(maxPlayers: number): Promise<RoomAck> {
   return emitAck('room:setMaxPlayers', { maxPlayers })
 }
 
-export function socketSetTarget(score: number): void {
-  connectSocket().emit('room:setTarget', { score })
+export function socketSetTarget(score: number): Promise<RoomAck> {
+  return emitAck('room:setTarget', { score })
 }
 
 export async function socketStartGame(): Promise<RoomAck> {
@@ -131,36 +137,36 @@ export async function socketDiscard(cardId: string): Promise<RoomAck> {
   return emitAck('game:discard', { cardId })
 }
 
-export function socketMoveWild(meldId: string): void {
-  connectSocket().emit('game:moveWild', { meldId })
+export function socketMoveWild(meldId: string): Promise<RoomAck> {
+  return emitAck('game:moveWild', { meldId })
 }
 
-export function socketDeclareShow(): void {
-  connectSocket().emit('game:declareShow')
+export function socketDeclareShow(): Promise<RoomAck> {
+  return emitAck('game:declareShow')
 }
 
-export function socketForceSuddenDeath(): void {
-  connectSocket().emit('game:forceSuddenDeath')
+export function socketForceSuddenDeath(): Promise<RoomAck> {
+  return emitAck('game:forceSuddenDeath')
 }
 
-export function socketAutoEndTurn(): void {
-  connectSocket().emit('game:autoEndTurn')
+export function socketAutoEndTurn(): Promise<RoomAck> {
+  return emitAck('game:autoEndTurn')
 }
 
 export async function socketTogglePause(): Promise<RoomAck> {
   return emitAck('game:togglePause')
 }
 
-export function socketStartNewGame(): void {
-  connectSocket().emit('game:startNewGame')
+export function socketStartNewGame(): Promise<RoomAck> {
+  return emitAck('game:startNewGame')
 }
 
-export function socketNextRound(): void {
-  connectSocket().emit('game:nextRound')
+export function socketNextRound(): Promise<RoomAck> {
+  return emitAck('game:nextRound')
 }
 
-export function socketReturnToLobby(): void {
-  connectSocket().emit('room:returnToLobby')
+export function socketReturnToLobby(): Promise<RoomAck> {
+  return emitAck('room:returnToLobby')
 }
 
 export function bindSocketStoreHandlers(handlers: {

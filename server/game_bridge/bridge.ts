@@ -13,6 +13,7 @@ import { initialPozzettoState, shouldClaimPozzettoOnDiscard, shouldClaimPozzetto
 import { performDrawFromStock, performDiscard, attemptMeldAction, getNextPlayerId } from '../../src/engine/turnEngine.ts'
 import { moveWildInMeld } from '../../src/engine/meldValidation.ts'
 import { evaluateShowEligibility } from '../../src/engine/showEligibility.ts'
+import { EMPTY_HAND_FOUL_PENALTY, isIllegalEmptyHand } from '../../src/engine/emptyHandFoul.ts'
 import { scoreRound } from '../../src/engine/scoring.ts'
 import type {
   CardModel,
@@ -654,6 +655,17 @@ function discard(params: { roomId: string; playerId: string; cardId: string }): 
     session.room = autoShow.room
     session.game = autoShow.game
     return { room: session.room, game: session.game }
+  }
+
+  if (isIllegalEmptyHand(teamAfter, claim.hand.length)) {
+    const prev = game.emptyHandFoulByTeam ?? { 'team-a': 0, 'team-b': 0 }
+    game = {
+      ...game,
+      emptyHandFoulByTeam: {
+        ...prev,
+        [team.id]: (prev[team.id] ?? 0) + EMPTY_HAND_FOUL_PENALTY,
+      },
+    }
   }
 
   game = { ...game, turn: advanceTurn(game, room, params.playerId), pendingSlide: null }

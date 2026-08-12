@@ -63,11 +63,42 @@ import {
   socketStartGame,
   socketStartNewGame,
   socketTogglePause,
+  type RoomAck,
 } from '../lib/socket'
 
 export type PlayMode = 'solo' | 'online'
 
 const ONLINE_SESSION_KEY = 'canasta.onlineSession'
+
+const EMPTY_SELECTION = {
+  selectedCardIds: [] as string[],
+  selectedMeldId: null as string | null,
+  topTouchInProgress: false,
+  selectedDiscardIds: [] as string[],
+}
+
+async function runOnlineAction(
+  get: () => GameStoreState,
+  set: (partial: Partial<GameStoreState>) => void,
+  run: () => Promise<RoomAck>,
+  failMessage: string,
+): Promise<boolean> {
+  try {
+    let ack = await run()
+    if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+      const rejoined = await get().actions.rejoinOnlineSession()
+      if (rejoined) ack = await run()
+    }
+    if (!ack.ok) {
+      set({ lastActionError: ack.error || failMessage })
+      return false
+    }
+    return true
+  } catch (err) {
+    set({ lastActionError: err instanceof Error ? err.message : failMessage })
+    return false
+  }
+}
 
 function persistOnlineSession(roomId: string, playerId: string) {
   try {
@@ -298,40 +329,42 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
         playMode: 'online',
       })
     },
-    onGameState: (game) => {
+    onGameState: (game, playerId) => {
       const prev = get()
-      const localId = prev.localPlayerId
-      const handIds = new Set(
-        game && localId ? (game.hands[localId] ?? []).map((c) => c.id) : [],
+      const localId = playerId || prev.localPlayerId
+      if (!game) {
+        set({
+          game: null,
+          ...(playerId ? { localPlayerId: playerId } : {}),
+          ...EMPTY_SELECTION,
+        })
+        return
+      }
+
+      const handIds = new Set(localId ? (game.hands[localId] ?? []).map((c) => c.id) : [])
+      const localTeam = prev.room?.teams.find((t) => localId && t.playerIds.includes(localId))
+      const meldStillExists = !!(
+        prev.selectedMeldId && localTeam?.melds.some((m) => m.id === prev.selectedMeldId)
       )
       const turnChanged =
-        !!game &&
         !!prev.game &&
         (game.turn.activePlayerId !== prev.game.turn.activePlayerId ||
           game.turn.phase !== prev.game.turn.phase ||
           game.turn.turnNumber !== prev.game.turn.turnNumber)
 
-      // Always drop card ids that are no longer in the server hand. Online melds
-      // keep the same turn/phase, so without this prune the next Meld still
-      // sends ids from the previous meld → "Selected cards are not all in hand."
       const prunedSelected = turnChanged
         ? []
         : prev.selectedCardIds.filter((id) => handIds.has(id))
-
-      const clearTopTouch = turnChanged || game?.turn.phase !== 'draw'
+      const clearTopTouch = turnChanged || game.turn.phase !== 'draw'
 
       set({
         game,
+        ...(playerId ? { localPlayerId: playerId } : {}),
         selectedCardIds: prunedSelected,
-        ...(turnChanged
-          ? {
-              selectedMeldId: null,
-              topTouchInProgress: false,
-              selectedDiscardIds: [],
-            }
-          : clearTopTouch
-            ? { topTouchInProgress: false, selectedDiscardIds: [] }
-            : {}),
+        selectedMeldId: turnChanged || !meldStillExists ? null : prev.selectedMeldId,
+        ...(turnChanged || clearTopTouch
+          ? { topTouchInProgress: false, selectedDiscardIds: [] }
+          : {}),
       })
     },
     onActionError: (error) => set({ lastActionError: error }),
@@ -693,7 +726,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const { room, localPlayerId, playMode } = get()
       if (!room || !localPlayerId) return
       if (playMode === 'online') {
-        socketSetTeam(teamId)
+        void runOnlineAction(get, set, () => socketSetTeam(teamId), 'Could not switch teams.')
         return
       }
       const perTeam = seatsPerTeam(normalizeMaxPlayers(room.maxPlayers))
@@ -767,7 +800,12 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const { room, playMode } = get()
       if (!room) return
       if (playMode === 'online') {
-        socketSetTarget(Math.max(500, Math.round(score)))
+        void runOnlineAction(
+          get,
+          set,
+          () => socketSetTarget(Math.max(500, Math.round(score))),
+          'Could not update target score.',
+        )
         return
       }
       set({ room: { ...room, matchTargetScore: Math.max(500, Math.round(score)) } })
@@ -841,19 +879,12 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (playMode === 'online') {
         void (async () => {
           set({ lastActionError: null })
-          let ack = await socketStartGame()
-          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
-            const rejoined = await get().actions.rejoinOnlineSession()
-            if (rejoined) ack = await socketStartGame()
-          }
-          if (!ack.ok) {
-            set({
-              lastActionError:
-                ack.error ||
-                'Could not start the game. Only the host can start once the lobby is full and ready.',
-            })
-            return
-          }
+          await runOnlineAction(
+            get,
+            set,
+            () => socketStartGame(),
+            'Could not start the game. Only the host can start once the lobby is full and ready.',
+          )
         })()
         return
       }
@@ -887,7 +918,9 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     toggleSelectCard: (cardId: string) => {
-      const { selectedCardIds } = get()
+      const { selectedCardIds, game, localPlayerId } = get()
+      const hand = game && localPlayerId ? game.hands[localPlayerId] ?? [] : []
+      if (!hand.some((c) => c.id === cardId)) return
       set({
         selectedCardIds: selectedCardIds.includes(cardId)
           ? selectedCardIds.filter((id) => id !== cardId)
@@ -908,14 +941,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (playMode === 'online') {
         void (async () => {
           set({ lastActionError: null })
-          let ack = await socketDraw()
-          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
-            const rejoined = await get().actions.rejoinOnlineSession()
-            if (rejoined) ack = await socketDraw()
-          }
-          if (!ack.ok) {
-            set({ lastActionError: ack.error || 'Could not draw from stock.' })
-          }
+          const ok = await runOnlineAction(get, set, () => socketDraw(), 'Could not draw from stock.')
+          if (!ok) return
         })()
         return
       }
@@ -1006,32 +1033,19 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
             : []
         void (async () => {
           set({ lastActionError: null })
-          let ack = await socketAttemptMeld({
-            handCardIds: validSelected,
-            targetMeldId: selectedMeldId,
-            selectedDiscardIds: meldDiscardIds,
-          })
-          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
-            const rejoined = await get().actions.rejoinOnlineSession()
-            if (rejoined) {
-              ack = await socketAttemptMeld({
+          const ok = await runOnlineAction(
+            get,
+            set,
+            () =>
+              socketAttemptMeld({
                 handCardIds: validSelected,
                 targetMeldId: selectedMeldId,
                 selectedDiscardIds: meldDiscardIds,
-              })
-            }
-          }
-          if (!ack.ok) {
-            set({ lastActionError: ack.error || 'Could not meld.' })
-            return
-          }
-          // Server broadcast prunes; clear immediately so a rapid second meld is clean.
-          set({
-            selectedCardIds: [],
-            selectedMeldId: null,
-            topTouchInProgress: false,
-            selectedDiscardIds: [],
-          })
+              }),
+            'Could not meld.',
+          )
+          if (!ok) return
+          set({ ...EMPTY_SELECTION })
         })()
         return
       }
@@ -1224,7 +1238,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
       if (playMode === 'online') {
-        socketMoveWild(meldId)
+        void runOnlineAction(get, set, () => socketMoveWild(meldId), 'Could not move wild.')
         return
       }
       const team = findTeamForPlayer(room, localPlayerId)
@@ -1250,17 +1264,28 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!game || !room || !localPlayerId || !game.pendingSlide) return
       const team = room.teams.find((t) => t.id === game.pendingSlide!.teamId)
       const meld = team?.melds.find((m) => m.id === game.pendingSlide!.meldId)
-      if (!team || !meld || selectedCardIds.length !== 1) return
+      const hand = game.hands[localPlayerId] ?? []
+      const validSelected = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
+      if (!team || !meld || validSelected.length !== 1) return
       if (playMode === 'online') {
-        socketResolveSlide({
-          edge,
-          handCardIds: selectedCardIds,
-          targetMeldId: meld.id,
-        })
+        void (async () => {
+          const ok = await runOnlineAction(
+            get,
+            set,
+            () =>
+              socketResolveSlide({
+                edge,
+                handCardIds: validSelected,
+                targetMeldId: meld.id,
+              }),
+            'Could not resolve slide.',
+          )
+          if (ok) set({ ...EMPTY_SELECTION })
+        })()
         return
       }
 
-      const result = appendCardFromHand(game.hands[localPlayerId], selectedCardIds[0], meld, edge, team)
+      const result = appendCardFromHand(game.hands[localPlayerId], validSelected[0], meld, edge, team)
       if (!result.ok) {
         set({ lastActionError: result.error, game: { ...game, pendingSlide: null } })
         return
@@ -1318,16 +1343,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (playMode === 'online') {
         void (async () => {
           set({ lastActionError: null })
-          let ack = await socketDiscard(cardId)
-          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
-            const rejoined = await get().actions.rejoinOnlineSession()
-            if (rejoined) ack = await socketDiscard(cardId)
-          }
-          if (!ack.ok) {
-            set({ lastActionError: ack.error || 'Could not discard.' })
-            return
-          }
-          set({ selectedCardIds: [], selectedMeldId: null, topTouchInProgress: false, selectedDiscardIds: [] })
+          const ok = await runOnlineAction(get, set, () => socketDiscard(cardId), 'Could not discard.')
+          if (ok) set({ ...EMPTY_SELECTION })
         })()
         return
       }
@@ -1391,12 +1408,27 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'action') return
       if (playMode === 'online') {
-        // If one card left, discard it first then show — server declare_show
-        // checks empty hand; send discard then declare.
-        if (selectedCardIds.length === 1 && (game.hands[localPlayerId]?.length ?? 0) === 1) {
-          socketDiscard(selectedCardIds[0])
-        }
-        socketDeclareShow()
+        void (async () => {
+          const hand = get().game?.hands[localPlayerId] ?? []
+          const valid = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
+          if (hand.length === 1) {
+            if (valid.length !== 1) {
+              set({ lastActionError: 'Select your final card to discard and declare Show.' })
+              return
+            }
+            // Last-card discard auto-Shows on the server when eligible.
+            const ok = await runOnlineAction(
+              get,
+              set,
+              () => socketDiscard(valid[0]),
+              'Could not discard the final card.',
+            )
+            if (ok) set({ ...EMPTY_SELECTION })
+            return
+          }
+          const ok = await runOnlineAction(get, set, () => socketDeclareShow(), 'Could not declare Show.')
+          if (ok) set({ ...EMPTY_SELECTION })
+        })()
         return
       }
       const team = findTeamForPlayer(room, localPlayerId)
@@ -1446,7 +1478,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!room || !game) return
       if (game.stock.length !== 0) return
       if (playMode === 'online') {
-        socketForceSuddenDeath()
+        void runOnlineAction(get, set, () => socketForceSuddenDeath(), 'Could not end the round.')
         return
       }
       const { room: scoredRoom, game: scoredGame } = endRoundWithScore(room, game, 'sudden-death', null)
@@ -1470,7 +1502,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (game.turn.activePlayerId !== localPlayerId) return
       if (room.status !== 'in-progress') return
       if (playMode === 'online') {
-        socketAutoEndTurn()
+        void runOnlineAction(get, set, () => socketAutoEndTurn(), 'Could not auto-end the turn.')
         return
       }
       const team = findTeamForPlayer(room, localPlayerId)
@@ -1577,17 +1609,16 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         : { ...game.turn, isPaused: true, pausedAt: Date.now() }
 
       if (playMode === 'online') {
-        // Optimistic so Pause/Resume flips immediately; server broadcast confirms.
+        const snapshot = game
         set({ game: { ...game, turn: nextTurn }, lastActionError: null })
         void (async () => {
-          let ack = await socketTogglePause()
-          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
-            const rejoined = await get().actions.rejoinOnlineSession()
-            if (rejoined) ack = await socketTogglePause()
-          }
-          if (!ack.ok) {
-            set({ lastActionError: ack.error || 'Could not pause/resume the timer.' })
-          }
+          const ok = await runOnlineAction(
+            get,
+            set,
+            () => socketTogglePause(),
+            'Could not pause/resume the timer.',
+          )
+          if (!ok) set({ game: snapshot })
         })()
         return
       }
@@ -1599,7 +1630,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const { room, playMode } = get()
       if (!room) return
       if (playMode === 'online') {
-        socketStartNewGame()
+        void runOnlineAction(get, set, () => socketStartNewGame(), 'Could not start a new game.')
         return
       }
       botTurnGeneration += 1
@@ -1635,7 +1666,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const { room, game, playMode } = get()
       if (!room || !game) return
       if (playMode === 'online') {
-        socketNextRound()
+        void runOnlineAction(get, set, () => socketNextRound(), 'Could not start the next round.')
         return
       }
       if (room.status !== 'round-end' || game.gameOverTeamId) return
@@ -1668,7 +1699,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const { room, playMode } = get()
       if (!room) return
       if (playMode === 'online') {
-        socketReturnToLobby()
+        void runOnlineAction(get, set, () => socketReturnToLobby(), 'Could not return to lobby.')
         return
       }
       botTurnGeneration += 1

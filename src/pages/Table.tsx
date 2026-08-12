@@ -223,7 +223,12 @@ export function Table() {
   const isDrawPhase = isLocalTurn && game.turn.phase === 'draw'
   const isActionPhase = isLocalTurn && game.turn.phase === 'action'
   const stockDepleted = game.stock.length === 0
-  const canDiscard = (isActionPhase || (isLocalTurn && game.turn.phase === 'discard')) && selectedCardIds.length === 1
+  // Count only ids still in hand — stale ids from a prior online meld must not
+  // block Discard while the UI only highlights the live card(s).
+  const handIdSet = new Set(localHand.map((c) => c.id))
+  const validSelectedCount = selectedCardIds.filter((id) => handIdSet.has(id)).length
+  const canDiscard =
+    (isActionPhase || (isLocalTurn && game.turn.phase === 'discard')) && validSelectedCount === 1
 
   const showElig = localTeam ? evaluateShowEligibility(localTeam, localHand.length) : null
   const canDeclareShow =
@@ -231,7 +236,7 @@ export function Table() {
     !!showElig &&
     showElig.reserveActivated &&
     showElig.canastaWinCondition &&
-    (localHand.length === 0 || (localHand.length === 1 && selectedCardIds.length === 1))
+    (localHand.length === 0 || (localHand.length === 1 && validSelectedCount === 1))
   const showUnmetReasons = showElig ? unmetShowConditions(showElig) : []
 
   // Item 8: cards this player just drew / picked up glow for a couple seconds.
@@ -247,14 +252,14 @@ export function Table() {
 
   function handleMeld() {
     if (topTouchInProgress) {
-      if (selectedCardIds.length === 0 && !selectedMeldId) {
+      if (validSelectedCount === 0 && !selectedMeldId) {
         return reportInvalidAction('Select hand cards or a meld group to combine with the top discard card.')
       }
       attemptMeld()
       return
     }
     if (!isActionPhase) return reportInvalidAction('You can only meld during your action phase (after drawing).')
-    if (selectedCardIds.length === 0) return reportInvalidAction('Select hand cards to meld.')
+    if (validSelectedCount === 0) return reportInvalidAction('Select hand cards to meld.')
     attemptMeld()
   }
 
@@ -350,7 +355,7 @@ export function Table() {
               remainingSeconds={remainingSeconds}
               isPaused={isPaused}
               highlight
-              roleLabel="Teammate"
+              roleLabel={room.players.length === 2 ? 'Opponent' : 'Teammate'}
               stackOrientation="horizontal"
             />
           )}
