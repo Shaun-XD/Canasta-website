@@ -6,7 +6,7 @@ import {
   seedFlipOriginFromAnchor,
 } from '../hooks/useCardFlip'
 import { meldCards } from '../types/game'
-import type { GameState, PlayerId, RoomState } from '../types/game'
+import type { CardPlayEvent, GameState, PlayerId, RoomState } from '../types/game'
 
 const remoteFlip = { slow: true } as const
 const MAX_PILE_FLIGHTS = 12
@@ -23,8 +23,13 @@ function meldIdSet(room: RoomState | null | undefined): Set<string> {
 }
 
 function inferActor(prev: GameState, next: GameState): PlayerId | null {
-  if (next.lastAcquired && next.lastAcquired.at !== prev.lastAcquired?.at) {
-    return next.lastAcquired.playerId
+  if (next.lastPlay && next.lastPlay.at !== prev.lastPlay?.at) {
+    return next.lastPlay.actorId
+  }
+  // Prefer the player whose public piles changed so a leftover lastAcquired
+  // draw event cannot steal a later discard/meld.
+  if (next.discardPile.cards.length > prev.discardPile.cards.length) {
+    return prev.turn.activePlayerId
   }
   const changed: PlayerId[] = []
   for (const pid of Object.keys(next.hands)) {
@@ -33,6 +38,9 @@ function inferActor(prev: GameState, next: GameState): PlayerId | null {
     }
   }
   if (changed.length === 1) return changed[0]
+  if (next.lastAcquired && next.lastAcquired.at !== prev.lastAcquired?.at) {
+    return next.lastAcquired.playerId
+  }
   return prev.turn.activePlayerId
 }
 
@@ -54,10 +62,75 @@ function staggerDetachedFlights(
   }
 }
 
+function applyPublicPlay(play: CardPlayEvent): void {
+  const handAnchor = `hand-${play.actorId}`
+  if (play.kind === 'draw-stock') {
+    const from = getFlipAnchorRect('stock')
+    const to = getFlipAnchorRect(handAnchor)
+    if (from && to) staggerDetachedFlights(from, to, Math.max(play.count, 1))
+    return
+  }
+  if (play.kind === 'discard') {
+    for (const id of play.cardIds) seedFlipOriginFromAnchor(id, handAnchor, remoteFlip)
+    return
+  }
+  const fromDiscard = new Set(play.fromDiscardIds)
+  for (const id of play.cardIds) {
+    if (fromDiscard.has(id)) continue
+    seedFlipOriginFromAnchor(id, handAnchor, remoteFlip)
+  }
+  if (play.kind === 'top-touch' && play.count > 0) {
+    const from = getFlipAnchorRect('discard')
+    const to = getFlipAnchorRect(handAnchor)
+    if (from && to) staggerDetachedFlights(from, to, play.count)
+  }
+}
+
+function applyPozzettoFlights(
+  prevGame: GameState,
+  nextGame: GameState,
+  nextRoom: RoomState | null,
+  localPlayerId: PlayerId,
+  actorId: PlayerId | null,
+): void {
+  if (!nextRoom) return
+  for (const team of nextRoom.teams) {
+    const prevLen = prevGame.pozzettoStacks[team.id]?.length ?? 0
+    const nextLen = nextGame.pozzettoStacks[team.id]?.length ?? 0
+    if (prevLen <= 0 || nextLen !== 0) continue
+    const claimedBy = team.pozzetto.claimedByPlayerId ?? actorId
+    if (!claimedBy) continue
+    if (claimedBy === localPlayerId) {
+      const prevIds = new Set((prevGame.hands[localPlayerId] ?? []).map((c) => c.id))
+      const newIds = (nextGame.hands[localPlayerId] ?? [])
+        .filter((c) => !prevIds.has(c.id))
+        .map((c) => c.id)
+      playPozzettoClaimFlights({
+        teamId: team.id,
+        playerId: claimedBy,
+        cardIds: newIds.length > 0 ? newIds : Array.from({ length: prevLen }, (_, i) => `poz-local-${team.id}-${i}`),
+        toLocalHand: true,
+        slow: false,
+      })
+      continue
+    }
+    playPozzettoClaimFlights({
+      teamId: team.id,
+      playerId: claimedBy,
+      cardIds: Array.from({ length: prevLen }, (_, i) => `poz-remote-${team.id}-${i}`),
+      toLocalHand: false,
+      slow: true,
+    })
+  }
+}
+
 /**
- * Mirror another seat's card motion for online spectators — same idea as
- * bot flights: seed FLIP origins onto visible piles (discard / melds) and
- * play face-down ghosts into MiniCardStack seats that have no per-card DOM.
+ * Mirror another seat's card motion for every online client — same idea as
+ * bot flights. The acting player already FLIPs their own cards; this runs
+ * on everyone else's screen so a discard/meld/draw is visible both ways.
+ *
+ * Prefers the server `lastPlay` hint (authoritative). Falls back to diffs
+ * if an older server has not stamped lastPlay yet.
  *
  * Must run BEFORE React commits the new state so newly mounted AnimatedCards
  * pick up the seeded origin in the same layout pass.
@@ -73,8 +146,25 @@ export function seedRemotePlayerFlights(opts: {
   if (!localPlayerId) return
   if (nextGame.round !== prevGame.round) return
 
+  const play = nextGame.lastPlay
+  const playIsNew = !!play && play.at !== prevGame.lastPlay?.at
+
+  if (playIsNew && play.actorId !== localPlayerId) {
+    applyPublicPlay(play)
+    applyPozzettoFlights(prevGame, nextGame, nextRoom, localPlayerId, play.actorId)
+    return
+  }
+
+  if (playIsNew && play.actorId === localPlayerId) {
+    applyPozzettoFlights(prevGame, nextGame, nextRoom, localPlayerId, play.actorId)
+    return
+  }
+
   const actorId = inferActor(prevGame, nextGame)
-  if (!actorId || actorId === localPlayerId) return
+  if (!actorId || actorId === localPlayerId) {
+    applyPozzettoFlights(prevGame, nextGame, nextRoom, localPlayerId, actorId)
+    return
+  }
 
   const handAnchor = `hand-${actorId}`
   const prevHandCount = prevGame.hands[actorId]?.length ?? 0
@@ -85,7 +175,6 @@ export function seedRemotePlayerFlights(opts: {
   const prevMeldIds = meldIdSet(prevRoom)
   const nextMeldIds = meldIdSet(nextRoom)
 
-  // Hand → discard: new discard cards fly out of that seat's stack.
   if (nextDiscard.length > prevDiscard.length) {
     for (const card of nextDiscard) {
       if (!prevDiscardIds.has(card.id)) {
@@ -94,8 +183,6 @@ export function seedRemotePlayerFlights(opts: {
     }
   }
 
-  // Hand → meld: new meld cards that were not already on the discard fan.
-  // (Discard → meld keeps the discard pile's lastKnownRect.)
   for (const id of nextMeldIds) {
     if (prevMeldIds.has(id) || prevDiscardIds.has(id)) continue
     seedFlipOriginFromAnchor(id, handAnchor, remoteFlip)
@@ -105,35 +192,17 @@ export function seedRemotePlayerFlights(opts: {
   const handDelta = nextHandCount - prevHandCount
   const discardDelta = nextDiscard.length - prevDiscard.length
 
-  // Stock → opponent/teammate stack (no per-card element at the destination).
   if (stockDelta > 0 && handDelta > 0) {
     const from = getFlipAnchorRect('stock')
     const to = getFlipAnchorRect(handAnchor)
     if (from && to) staggerDetachedFlights(from, to, Math.min(stockDelta, handDelta))
   }
 
-  // Top Touch remainder: discard pile shrinks, extra cards join their hand.
   if (discardDelta < 0 && handDelta > 0 && stockDelta === 0) {
     const from = getFlipAnchorRect('discard')
     const to = getFlipAnchorRect(handAnchor)
     if (from && to) staggerDetachedFlights(from, to, handDelta)
   }
 
-  // Pozzetto claim into a remote seat.
-  if (nextRoom && prevRoom) {
-    for (const team of nextRoom.teams) {
-      const prevLen = prevGame.pozzettoStacks[team.id]?.length ?? 0
-      const nextLen = nextGame.pozzettoStacks[team.id]?.length ?? 0
-      if (prevLen <= 0 || nextLen !== 0) continue
-      const claimedBy = team.pozzetto.claimedByPlayerId ?? actorId
-      if (claimedBy === localPlayerId) continue
-      playPozzettoClaimFlights({
-        teamId: team.id,
-        playerId: claimedBy,
-        cardIds: Array.from({ length: prevLen }, (_, i) => `poz-remote-${team.id}-${i}`),
-        toLocalHand: false,
-        slow: true,
-      })
-    }
-  }
+  applyPozzettoFlights(prevGame, nextGame, nextRoom, localPlayerId, actorId)
 }

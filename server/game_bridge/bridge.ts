@@ -17,6 +17,8 @@ import { EMPTY_HAND_FOUL_PENALTY, isIllegalEmptyHand } from '../../src/engine/em
 import { scoreRound } from '../../src/engine/scoring.ts'
 import type {
   CardModel,
+  CardPlayEvent,
+  CardPlayKind,
   GameState,
   Player,
   PlayerId,
@@ -24,7 +26,7 @@ import type {
   Team,
   TeamId,
 } from '../../src/types/game.ts'
-import { DEFAULT_TARGET_SCORE, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam } from '../../src/types/game.ts'
+import { DEFAULT_TARGET_SCORE, meldCards, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam } from '../../src/types/game.ts'
 
 const HAND_SIZE = 13
 const POZZETTO_SIZE = 11
@@ -39,6 +41,21 @@ const sessions = new Map<string, Session>()
 
 function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function cardPlay(
+  actorId: PlayerId,
+  kind: CardPlayKind,
+  extra: Partial<Pick<CardPlayEvent, 'cardIds' | 'fromDiscardIds' | 'count'>> = {},
+): CardPlayEvent {
+  return {
+    at: Date.now(),
+    actorId,
+    kind,
+    cardIds: extra.cardIds ?? [],
+    fromDiscardIds: extra.fromDiscardIds ?? [],
+    count: extra.count ?? 0,
+  }
 }
 
 function makeRoomCode(): string {
@@ -118,6 +135,7 @@ function dealNewRound(room: RoomState, round = 1): GameState {
     lastTopTouchFailure: null,
     gameOverTeamId: null,
     lastAcquired: null,
+    lastPlay: null,
   }
 }
 
@@ -494,6 +512,7 @@ function draw(params: { roomId: string; playerId: string }): { room: RoomState; 
     lastAcquired: result.drawnCard
       ? { playerId: params.playerId, cardIds: [result.drawnCard.id], at: Date.now() }
       : game.lastAcquired,
+    lastPlay: cardPlay(params.playerId, 'draw-stock', { count: result.drawnCard ? 1 : 0 }),
   }
   return { room: session.room, game: session.game }
 }
@@ -556,16 +575,24 @@ function attempt_meld(params: {
   let pozzettoStacks = game.pozzettoStacks
   let pozzetto = team.pozzetto
 
+  const prevMeldIds = new Set(team.melds.flatMap((m) => meldCards(m).map((c) => c.id)))
+  const newMeldIds = meldsAfter
+    .flatMap((m) => meldCards(m).map((c) => c.id))
+    .filter((id) => !prevMeldIds.has(id))
+  const fromDiscardIds = result.usedDiscardCards.map((c) => c.id)
+  let remainderCount = 0
+
   if (isTopTouch) {
-    const usedIds = new Set(result.usedDiscardCards.map((c) => c.id))
+    const usedIds = new Set(fromDiscardIds)
     const restOfPile = game.discardPile.cards.filter((c) => !usedIds.has(c.id))
+    remainderCount = restOfPile.length
     hand = sortHand([...hand, ...restOfPile])
     game = {
       ...game,
       discardPile: { cards: [] },
       lastAcquired: {
         playerId: params.playerId,
-        cardIds: [...result.usedDiscardCards.map((c) => c.id), ...restOfPile.map((c) => c.id)],
+        cardIds: [...fromDiscardIds, ...restOfPile.map((c) => c.id)],
         at: Date.now(),
       },
     }
@@ -583,6 +610,11 @@ function attempt_meld(params: {
     pozzettoStacks,
     turn: { ...game.turn, phase: 'action', hasDrawnThisTurn: true },
     pendingSlide: null,
+    lastPlay: cardPlay(params.playerId, isTopTouch ? 'top-touch' : 'meld', {
+      cardIds: newMeldIds,
+      fromDiscardIds,
+      count: remainderCount,
+    }),
   }
 
   const teamAfter = findTeamForPlayer(room, params.playerId)!
@@ -647,6 +679,7 @@ function discard(params: { roomId: string; playerId: string; cardId: string }): 
     hands: { ...game.hands, [params.playerId]: sortHand(claim.hand) },
     discardPile: { cards: result.discardPile },
     pozzettoStacks: claim.pozzettoStacks,
+    lastPlay: cardPlay(params.playerId, 'discard', { cardIds: [params.cardId] }),
   }
 
   const teamAfter = findTeamForPlayer(room, params.playerId)!

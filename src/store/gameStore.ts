@@ -461,6 +461,7 @@ function dealNewRound(room: RoomState): GameState {
     lastTopTouchFailure: null,
     gameOverTeamId: null,
     lastAcquired: null,
+    lastPlay: null,
     emptyHandFoulByTeam: { 'team-a': 0, 'team-b': 0 },
   }
 }

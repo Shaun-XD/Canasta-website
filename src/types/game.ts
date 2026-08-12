@@ -273,6 +273,25 @@ export interface AcquiredCardsEvent {
   at: number
 }
 
+/**
+ * Public motion hint broadcast with every online action so every client can
+ * play the same card flights (actor sees their own FLIP; everyone else
+ * mirrors from that seat's stack / the stock / the discard pile).
+ */
+export type CardPlayKind = 'draw-stock' | 'discard' | 'meld' | 'top-touch'
+
+export interface CardPlayEvent {
+  at: number
+  actorId: PlayerId
+  kind: CardPlayKind
+  /** Public cards that landed on the discard pile or a meld. */
+  cardIds: string[]
+  /** Subset of `cardIds` that came off the discard pile (Top Touch). */
+  fromDiscardIds: string[]
+  /** Face-down cards that entered a hidden hand (stock draw or Top Touch remainder). */
+  count: number
+}
+
 /** Full game-table state once a round is underway. */
 export interface GameState {
   roomId: string
@@ -290,6 +309,8 @@ export interface GameState {
   gameOverTeamId: TeamId | null
   /** Most recent card(s) added to a player's hand; drives the "new card" glow highlight. */
   lastAcquired: AcquiredCardsEvent | null
+  /** Most recent public card motion; drives mirrored flights for other seats. */
+  lastPlay: CardPlayEvent | null
   /**
    * Accumulated empty-hand foul penalties this round (negative), applied at
    * round end. Illegal empty after Pozzetto without Show eligibility.

@@ -101,6 +101,9 @@ def sanitize_game(game: dict[str, Any] | None, viewer_id: str) -> dict[str, Any]
 
     stock = game.get("stock") or []
     pozzetto = game.get("pozzettoStacks") or {}
+    acquired = game.get("lastAcquired")
+    if isinstance(acquired, dict) and acquired.get("playerId") != viewer_id:
+        acquired = {**acquired, "cardIds": []}
     return {
         **game,
         "hands": hands_out,
@@ -109,6 +112,7 @@ def sanitize_game(game: dict[str, Any] | None, viewer_id: str) -> dict[str, Any]
             tid: ([] if not cards else _opaque_cards(len(cards), f"poz-{tid}"))
             for tid, cards in pozzetto.items()
         },
+        "lastAcquired": acquired,
     }
 
 
