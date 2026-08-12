@@ -1455,27 +1455,36 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     togglePauseTimer: () => {
       const { game, playMode } = get()
       if (!game) return
+
+      const nextTurn = game.turn.isPaused
+        ? {
+            ...game.turn,
+            isPaused: false,
+            pausedAt: null,
+            // Shift deadline by pause duration so remaining time continues where it froze.
+            startedAt:
+              game.turn.startedAt +
+              (game.turn.pausedAt != null ? Date.now() - game.turn.pausedAt : 0),
+          }
+        : { ...game.turn, isPaused: true, pausedAt: Date.now() }
+
       if (playMode === 'online') {
-        socketTogglePause()
+        // Optimistic so Pause/Resume flips immediately; server broadcast confirms.
+        set({ game: { ...game, turn: nextTurn }, lastActionError: null })
+        void (async () => {
+          let ack = await socketTogglePause()
+          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+            const rejoined = await get().actions.rejoinOnlineSession()
+            if (rejoined) ack = await socketTogglePause()
+          }
+          if (!ack.ok) {
+            set({ lastActionError: ack.error || 'Could not pause/resume the timer.' })
+          }
+        })()
         return
       }
 
-      if (game.turn.isPaused) {
-        // Resume: shift `startedAt` forward by however long the pause
-        // lasted, so the deadline (startedAt + turnTimerSeconds) moves out
-        // by the same amount and the remaining time picks up exactly where
-        // it was frozen, instead of resetting.
-        const pausedDurationMs = game.turn.pausedAt != null ? Date.now() - game.turn.pausedAt : 0
-        set({
-          game: {
-            ...game,
-            turn: { ...game.turn, isPaused: false, pausedAt: null, startedAt: game.turn.startedAt + pausedDurationMs },
-          },
-        })
-        return
-      }
-
-      set({ game: { ...game, turn: { ...game.turn, isPaused: true, pausedAt: Date.now() } } })
+      set({ game: { ...game, turn: nextTurn } })
     },
 
     startNewGame: () => {

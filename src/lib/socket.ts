@@ -147,8 +147,8 @@ export function socketAutoEndTurn(): void {
   connectSocket().emit('game:autoEndTurn')
 }
 
-export function socketTogglePause(): void {
-  connectSocket().emit('game:togglePause')
+export async function socketTogglePause(): Promise<RoomAck> {
+  return emitAck('game:togglePause')
 }
 
 export function socketStartNewGame(): void {
