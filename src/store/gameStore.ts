@@ -38,6 +38,7 @@ import {
   playDetachedCardFlight,
   playPozzettoClaimFlights,
   seedFlipOriginFromAnchor,
+  seedFlipOriginIfUnknown,
 } from '../hooks/useCardFlip'
 import {
   bindSocketStoreHandlers,
@@ -321,28 +322,59 @@ interface GameStoreState {
 function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: () => GameStoreState) {
   if (onlineSyncBound) return
   onlineSyncBound = true
+  // Melds live on room, hands/discard on game. Applying room:state one tick
+  // before game:state mounts the same card id in a meld AND the hand, which
+  // inverts FLIP (teleport to meld, then fly back to the hand).
+  let pendingOnlineRoom: RoomState | null = null
+
   bindSocketStoreHandlers({
     onRoomState: (room, playerId) => {
-      set({
-        room: { ...room, maxPlayers: normalizeMaxPlayers(room.maxPlayers) },
-        localPlayerId: playerId,
-        playMode: 'online',
-      })
+      const normalized = { ...room, maxPlayers: normalizeMaxPlayers(room.maxPlayers) }
+      const { game } = get()
+      const defer =
+        normalized.status === 'in-progress' || normalized.status === 'round-end' || !!game
+      if (defer) {
+        pendingOnlineRoom = normalized
+        return
+      }
+      pendingOnlineRoom = null
+      set({ room: normalized, localPlayerId: playerId, playMode: 'online' })
     },
     onGameState: (game, playerId) => {
       const prev = get()
       const localId = playerId || prev.localPlayerId
+      const room = pendingOnlineRoom ?? prev.room
+      pendingOnlineRoom = null
+
       if (!game) {
         set({
+          ...(room ? { room } : {}),
           game: null,
           ...(playerId ? { localPlayerId: playerId } : {}),
+          playMode: 'online',
           ...EMPTY_SELECTION,
         })
         return
       }
 
+      // Stock is a generic face-down card (no per-id AnimatedCard). Seed the
+      // drawn card's origin from the stock pile BEFORE React mounts it in the
+      // hand — online draw is async so Table cannot seed at click time.
+      if (
+        game.lastAcquired &&
+        game.lastAcquired.at !== prev.game?.lastAcquired?.at &&
+        game.lastAcquired.playerId === localId
+      ) {
+        const stockRect = getFlipAnchorRect('stock')
+        if (stockRect) {
+          for (const id of game.lastAcquired.cardIds) {
+            seedFlipOriginIfUnknown(id, stockRect)
+          }
+        }
+      }
+
       const handIds = new Set(localId ? (game.hands[localId] ?? []).map((c) => c.id) : [])
-      const localTeam = prev.room?.teams.find((t) => localId && t.playerIds.includes(localId))
+      const localTeam = room?.teams.find((t) => localId && t.playerIds.includes(localId))
       const meldStillExists = !!(
         prev.selectedMeldId && localTeam?.melds.some((m) => m.id === prev.selectedMeldId)
       )
@@ -358,7 +390,9 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
       const clearTopTouch = turnChanged || game.turn.phase !== 'draw'
 
       set({
+        ...(room ? { room } : {}),
         game,
+        playMode: 'online',
         ...(playerId ? { localPlayerId: playerId } : {}),
         selectedCardIds: prunedSelected,
         selectedMeldId: turnChanged || !meldStillExists ? null : prev.selectedMeldId,

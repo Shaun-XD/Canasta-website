@@ -18,6 +18,7 @@ import { HandSortButtons, type HandSortMode } from '../components/HandSortButton
 import { sortHandByRank, sortHandBySuit } from '../lib/deck'
 import { evaluateShowEligibility, unmetShowConditions } from '../engine/showEligibility'
 import type { Player, Team } from '../types/game'
+import { meldCards } from '../types/game'
 
 const HAND_CARD_WIDTH = 78
 /** Deal size — spacing is calibrated so 13 cards define the squeeze baseline. */
@@ -179,16 +180,34 @@ export function Table() {
     const stockRect = stockRef.current?.getBoundingClientRect()
     drawFromStock()
     if (!stockRect) return
+    // Solo updates lastAcquired synchronously. Online seeds in onGameState
+    // via seedFlipOriginIfUnknown before the hand card mounts.
     const acquired = useGameStore.getState().game?.lastAcquired
     if (acquired && acquired.playerId === localPlayerId) {
       for (const cardId of acquired.cardIds) seedFlipOrigin(cardId, stockRect)
     }
   }
 
+  const meldedCardIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (!room) return ids
+    for (const team of room.teams) {
+      for (const meld of team.melds) {
+        for (const card of meldCards(meld)) ids.add(card.id)
+      }
+    }
+    return ids
+  }, [room])
+
   // Item 6: local-only drag-to-reorder for the player's hand row. Must run
   // unconditionally (before any early returns) per the rules of hooks - the
   // id list is simply empty until the table/hand actually exists.
-  const rawLocalHand = game && localPlayerId ? game.hands[localPlayerId] ?? [] : []
+  // Never render a card that's already on a meld — duplicate flipIds invert
+  // the flight (teleport onto the meld, then fly back into the hand).
+  const rawLocalHand =
+    game && localPlayerId
+      ? (game.hands[localPlayerId] ?? []).filter((c) => !meldedCardIds.has(c.id))
+      : []
   const {
     order: handOrder,
     draggingId,
@@ -463,7 +482,7 @@ export function Table() {
               data-flip-anchor="discard"
             >
               <DiscardPileView
-                cards={game.discardPile.cards}
+                cards={game.discardPile.cards.filter((c) => !meldedCardIds.has(c.id))}
                 topCardInteractive={isDrawPhase && !topTouchInProgress}
                 onTopCardClick={handleBeginTopTouch}
                 topTouchInProgress={topTouchInProgress}

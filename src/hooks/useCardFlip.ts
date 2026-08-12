@@ -71,6 +71,17 @@ export function seedFlipOrigin(
   lastKnownRect.set(id, { left: rect.left, top: rect.top })
 }
 
+/** Seed only if this id has never been measured — used for stock draws. */
+export function seedFlipOriginIfUnknown(
+  id: string,
+  rect: DOMRect | FlipPosition,
+  opts?: { slow?: boolean },
+): boolean {
+  if (lastKnownRect.has(id)) return false
+  seedFlipOrigin(id, rect, opts)
+  return true
+}
+
 /**
  * Looks up a DOM element marked with `data-flip-anchor="<anchorId>"` and
  * returns its current viewport rect, or null if it isn't on screen yet.
