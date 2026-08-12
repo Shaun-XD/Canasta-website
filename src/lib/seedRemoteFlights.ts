@@ -74,15 +74,15 @@ function applyPublicPlay(play: CardPlayEvent): void {
     for (const id of play.cardIds) seedFlipOriginFromAnchor(id, handAnchor, remoteFlip)
     return
   }
+  // Meld / Top Touch: cards already on the discard fan keep that lastKnownRect
+  // so they fly discard → meld. Hand cards seed from the actor's stack.
+  // Do not also fly the discard remainder into their hidden hand — that
+  // doubles up with the meld flight and looks like cards going to the hand
+  // and the table at the same time.
   const fromDiscard = new Set(play.fromDiscardIds)
   for (const id of play.cardIds) {
     if (fromDiscard.has(id)) continue
     seedFlipOriginFromAnchor(id, handAnchor, remoteFlip)
-  }
-  if (play.kind === 'top-touch' && play.count > 0) {
-    const from = getFlipAnchorRect('discard')
-    const to = getFlipAnchorRect(handAnchor)
-    if (from && to) staggerDetachedFlights(from, to, play.count)
   }
 }
 
@@ -198,7 +198,10 @@ export function seedRemotePlayerFlights(opts: {
     if (from && to) staggerDetachedFlights(from, to, Math.min(stockDelta, handDelta))
   }
 
-  if (discardDelta < 0 && handDelta > 0 && stockDelta === 0) {
+  // Remainder-only pickup (discard shrinks into a hidden hand, no new meld).
+  // Skip when discard cards landed on a meld — those must FLIP discard → table.
+  const meldedFromDiscard = [...nextMeldIds].some((id) => prevDiscardIds.has(id))
+  if (discardDelta < 0 && handDelta > 0 && stockDelta === 0 && !meldedFromDiscard) {
     const from = getFlipAnchorRect('discard')
     const to = getFlipAnchorRect(handAnchor)
     if (from && to) staggerDetachedFlights(from, to, handDelta)

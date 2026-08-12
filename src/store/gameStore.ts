@@ -180,18 +180,10 @@ function applyOnlineSnapshot(opts: {
     return
   }
 
-  // Skip no-op re-applies (ack + broadcast of the same state).
-  if (
-    prev.game &&
-    prev.game.turn.turnNumber === game.turn.turnNumber &&
-    prev.game.turn.phase === game.turn.phase &&
-    prev.game.turn.activePlayerId === game.turn.activePlayerId &&
-    prev.game.lastPlay?.at === game.lastPlay?.at &&
-    prev.game.lastAcquired?.at === game.lastAcquired?.at &&
-    (prev.game.hands[localId ?? '']?.length ?? 0) === (game.hands[localId ?? '']?.length ?? 0) &&
-    prev.game.stock.length === game.stock.length &&
-    prev.game.discardPile.cards.length === game.discardPile.cards.length
-  ) {
+  // Same lastPlay already applied (actor ack, then lobby broadcast).
+  // Do not skip when lastPlay is missing — guests rely on that path for
+  // opponent meld/draw diffs, and skipping hid their flights.
+  if (prev.game && game.lastPlay && prev.game.lastPlay?.at === game.lastPlay.at) {
     if (room && room !== prev.room) {
       set({ room, playMode: 'online', ...(playerId ? { localPlayerId: playerId } : {}) })
     }
@@ -201,10 +193,13 @@ function applyOnlineSnapshot(opts: {
   // Stock is a generic face-down card (no per-id AnimatedCard). Seed the
   // drawn card's origin from the stock pile BEFORE React mounts it in the
   // hand — online draw is async so Table cannot seed at click time.
+  // Top Touch remainder already has a discard lastKnownRect — do not re-seed
+  // those ids from the stock or they fly the wrong way.
   if (
     game.lastAcquired &&
     game.lastAcquired.at !== prev.game?.lastAcquired?.at &&
-    game.lastAcquired.playerId === localId
+    game.lastAcquired.playerId === localId &&
+    game.lastPlay?.kind !== 'top-touch'
   ) {
     const stockRect = getFlipAnchorRect('stock')
     if (stockRect) {

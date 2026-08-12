@@ -298,8 +298,9 @@ export function Table() {
     setHandSortMode('rank')
   }
 
-  const teamRed = room.teams.find((t) => t.id === 'team-a') ?? room.teams[0]
-  const teamBlue = room.teams.find((t) => t.id === 'team-b') ?? room.teams[1]
+  const opponentTeam = room.teams.find((t) => t.id !== localTeam?.id)
+  const leftTeam = localTeam ?? room.teams[0]
+  const rightTeam = opponentTeam ?? room.teams.find((t) => t.id !== leftTeam?.id)
 
   // ≤13: fewer cards → larger peek (spreadMult = 13/count). >13: squeeze into
   // the same width a 13-card comfort fan uses.
@@ -398,7 +399,8 @@ export function Table() {
           </div>
 
           <section className="melds-grid min-h-0 w-full flex-1" aria-label="Team melds">
-            {[teamRed, teamBlue].filter(Boolean).map((team) => {
+            {[leftTeam, rightTeam].filter(Boolean).map((team, index) => {
+              const isLocalSide = team.id === localTeam?.id
               const isRed = team.id === 'team-a'
               return (
                 <div
@@ -409,7 +411,7 @@ export function Table() {
                 >
                   <div className="flex shrink-0 items-center justify-between gap-2 px-0.5">
                     <span className={`text-xs font-bold tracking-wide ${isRed ? 'text-red-200/90' : 'text-sky-200/90'}`}>
-                      {team.name}
+                      {isLocalSide ? `${team.name} (You)` : team.name}
                     </span>
                     <span className="text-[10px] text-white/40">
                       {team.melds.length === 0 ? 'Empty' : `${team.melds.length} meld${team.melds.length === 1 ? '' : 's'}`}
@@ -418,11 +420,11 @@ export function Table() {
                   <div className="min-h-0 flex-1 overflow-hidden">
                     <MeldArea
                       team={team}
-                      align={isRed ? 'left' : 'right'}
-                      selectable={(isActionPhase || topTouchInProgress) && localTeam?.id === team.id}
+                      align={index === 0 ? 'left' : 'right'}
+                      selectable={(isActionPhase || topTouchInProgress) && isLocalSide}
                       selectedMeldId={selectedMeldId}
                       onSelectMeld={(id) => selectMeldTarget(selectedMeldId === id ? null : id)}
-                      canModify={isLocalTurn && localTeam?.id === team.id}
+                      canModify={isLocalTurn && isLocalSide}
                       onMoveWild={moveWildInMeld}
                     />
                   </div>

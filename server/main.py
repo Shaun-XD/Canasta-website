@@ -76,6 +76,15 @@ app.add_middleware(
 
 # sid -> { roomId, playerId }
 CLIENTS: dict[str, dict[str, str]] = {}
+# Keep a strong ref so lobby broadcasts are not GC'd before they run
+# (asyncio.create_task alone can drop the fan-out — guests then see no flights).
+_BROADCAST_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_broadcast(room_id: str, room: dict[str, Any], game: dict[str, Any] | None) -> None:
+    task = asyncio.create_task(broadcast_state(room_id, room, game))
+    _BROADCAST_TASKS.add(task)
+    task.add_done_callback(_BROADCAST_TASKS.discard)
 
 
 def _opaque_cards(n: int, prefix: str) -> list[dict[str, Any]]:
@@ -259,7 +268,7 @@ async def _player_action(sid: str, method: str, extra: dict[str, Any] | None = N
             # Fan-out to the lobby without blocking this ack. The acting client
             # also receives sanitized state in the ack so stock draw / meld
             # update immediately even if broadcast is delayed.
-            asyncio.create_task(broadcast_state(meta["roomId"], room, game))
+            _schedule_broadcast(meta["roomId"], room, game)
         print(f"[action] {method} ok sid={sid}", flush=True)
         return {
             "ok": True,
