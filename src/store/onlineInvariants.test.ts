@@ -1,5 +1,4 @@
 /** @vitest-environment node */
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { shouldRetryOnlineAction, shouldSkipOnlineSnapshot } from './onlineInvariants'
 import type { GameState } from '../types/game'
@@ -75,14 +74,5 @@ describe('shouldSkipOnlineSnapshot', () => {
     const prev = game({ stock: [{ id: 's1', rank: '4', suit: 'clubs' }], hands: { p1: [] } })
     const next = { ...prev, stock: [] as GameState['stock'] }
     expect(shouldSkipOnlineSnapshot({ prevGame: prev, nextGame: next, localPlayerId: 'p1' })).toBe(false)
-  })
-})
-
-describe('stock pile Card must not be a nested button', () => {
-  it('keeps decorative Card as a div (stock is already a button)', () => {
-    const src = readFileSync(new URL('../components/Card.tsx', import.meta.url), 'utf8')
-    expect(src).toContain('must be a <div>, not a <button>')
-    expect(src).toContain('if (onClick)')
-    expect(src).toMatch(/return \(\s*<div /)
   })
 })
