@@ -6,5 +6,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   test: {
     environment: 'jsdom',
+    // Engine unit tests don't need DOM; avoid jsdom ESM/CJS sniffs on Windows.
+    environmentMatchGlobs: [['src/engine/**', 'node']],
   },
 })

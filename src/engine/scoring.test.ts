@@ -89,5 +89,31 @@ describe('scoreRound - sudden-death ending', () => {
     // still zero-canasta and unclaimed-pozzetto penalized
     expect(result.teams['team-a'].zeroCanastaPenalty).toBe(-100)
     expect(result.teams['team-a'].unclaimedPozzettoPenalty).toBe(-100)
+    expect(result.teams['team-a'].emptyHandFoulPenalty).toBe(0)
+  })
+})
+
+describe('scoreRound - empty-hand foul', () => {
+  it('applies accumulated empty-hand foul penalties to the fouling team', () => {
+    const teamA = makeTeam('team-a', {
+      pozzetto: { claimed: true, claimedByPlayerId: 'p1', activated: true },
+    })
+    const teamB = makeTeam('team-b', {
+      pozzetto: { claimed: true, claimedByPlayerId: 'p2', activated: true },
+    })
+    const result = scoreRound(
+      1,
+      'sudden-death',
+      [teamA, teamB],
+      { 'team-a': [], 'team-b': [] },
+      null,
+      { 'team-a': 0, 'team-b': 0 },
+      { 'team-a': -150, 'team-b': 0 },
+    )
+    expect(result.teams['team-a'].emptyHandFoulPenalty).toBe(-150)
+    // activated pozzetto → no unclaimed penalty; zero canasta −100; foul −150
+    expect(result.teams['team-a'].unclaimedPozzettoPenalty).toBe(0)
+    expect(result.teams['team-a'].zeroCanastaPenalty).toBe(-100)
+    expect(result.teams['team-a'].total).toBe(-250)
   })
 })

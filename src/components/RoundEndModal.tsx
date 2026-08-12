@@ -60,6 +60,7 @@ export function RoundEndModal({
                     <ScoreLine label="Zero Canasta penalty" value={breakdown.zeroCanastaPenalty} />
                     <ScoreLine label="Unclaimed Pozzetto penalty" value={breakdown.unclaimedPozzettoPenalty} />
                     <ScoreLine label="Wrong meld penalty" value={breakdown.wrongMeldPenalty} />
+                    <ScoreLine label="Empty-hand foul" value={breakdown.emptyHandFoulPenalty} />
                     <div className="flex items-center justify-between pt-1 text-xs font-semibold text-white/80">
                       <span>Round total</span>
                       <span>

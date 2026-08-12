@@ -1,4 +1,4 @@
-import type { CardModel, Meld, MeldSlot, Rank, Suit, TeamId } from '../types/game'
+import type { CardModel, Meld, MeldSlot, Rank, Suit, Team, TeamId } from '../types/game'
 import {
   ACE_HIGH_ORDER,
   ACE_LOW_ORDER,
@@ -530,11 +530,90 @@ export function appendToSequence(
   return { ok: false, error: 'That card cannot be added to this sequence.' }
 }
 
-export function canAppendToMeld(meld: Meld, card: CardModel): boolean {
-  return meld.type === 'set' ? canAppendToSet(meld, card) : canAppendToSequence(meld, card)
+/** Optional team/hand context for Limpa-protection checks when appending wilds. */
+export interface AppendContext {
+  team?: Team
+  /** Caller's hand size before this append (1 = last card). */
+  handSize?: number
 }
 
-export function appendToMeld(meld: Meld, card: CardModel, slideEdge?: 'top' | 'bottom'): AppendResult {
+export function isCompletedLimpa(meld: Meld): boolean {
+  return meld.classification === 'limpa' || meld.classification === 'limpa-2s'
+}
+
+/**
+ * True when `card` would act as a wild fill on `meld` (not a natural 2-in-slot
+ * / natural 2s-set member). Used for Limpa protection.
+ */
+export function cardWouldBeWildFill(meld: Meld, card: CardModel): boolean {
+  if (card.rank === 'JOKER') return true
+  if (card.rank !== '2') return false
+  if (meld.type === 'set') {
+    // Natural members of a 2s set are not wild fills.
+    return meld.rank !== '2'
+  }
+  // Sequence: same-suit 2 extending into its natural '2' edge is not a wild.
+  if (card.suit && card.suit === meld.suit) {
+    const { min, max } = minMaxOrder(meld)
+    const two = RANK_ORDER['2']
+    if (two === max + 1 || two === min - 1) return false
+  }
+  return true
+}
+
+/**
+ * Never ruin a completed Limpa with a wild/2, except when:
+ * - team Canasta/Limpa bonuses ≥ 400 (so 200→100 still leaves ≥300), AND
+ * - the wild is the player's last hand card, AND
+ * - no other team meld can legally accept a wild (all others already have one
+ *   or cannot take one).
+ */
+export function limpaWildAppendAllowed(
+  meld: Meld,
+  card: CardModel,
+  ctx?: AppendContext,
+): boolean {
+  if (!isCompletedLimpa(meld) || !cardWouldBeWildFill(meld, card)) return true
+  const team = ctx?.team
+  const handSize = ctx?.handSize ?? 0
+  if (!team || handSize !== 1) return false
+
+  let bonus = 0
+  for (const m of team.melds) {
+    if (m.classification === 'in-progress') continue
+    bonus += meldBonus(m)
+  }
+  if (bonus < 400) return false
+
+  // All other meld piles already have a wild used — this Limpa is the only
+  // pile that can still accept a wild.
+  const othersWithoutWild = team.melds.some((m) => m.id !== meld.id && m.wildCount < 1)
+  return !othersWithoutWild
+}
+
+export function canAppendToMeld(meld: Meld, card: CardModel, ctx?: AppendContext): boolean {
+  const base = meld.type === 'set' ? canAppendToSet(meld, card) : canAppendToSequence(meld, card)
+  if (!base) return false
+  if (!limpaWildAppendAllowed(meld, card, ctx)) return false
+  return true
+}
+
+export function appendToMeld(
+  meld: Meld,
+  card: CardModel,
+  slideEdge?: 'top' | 'bottom',
+  ctx?: AppendContext,
+): AppendResult {
+  if (!canAppendToMeld(meld, card, ctx)) {
+    if (isCompletedLimpa(meld) && cardWouldBeWildFill(meld, card)) {
+      return {
+        ok: false,
+        error:
+          'Cannot ruin a Limpa with a wild/2 unless team bonuses are ≥400, it is your last card, and no other meld can take a wild.',
+      }
+    }
+    return { ok: false, error: 'That card cannot be added to this meld.' }
+  }
   return meld.type === 'set' ? appendToSet(meld, card) : appendToSequence(meld, card, slideEdge)
 }
 

@@ -41,6 +41,7 @@ export function scoreRound(
   handsByTeam: Record<TeamId, CardModel[]>,
   showingTeamId: TeamId | null,
   wrongMeldPenaltyByTeam: Record<TeamId, number> = { 'team-a': 0, 'team-b': 0 },
+  emptyHandFoulByTeam: Record<TeamId, number> = { 'team-a': 0, 'team-b': 0 },
 ): RoundScoreResult {
   const result: Record<TeamId, TeamRoundScore> = {} as Record<TeamId, TeamRoundScore>
 
@@ -57,6 +58,7 @@ export function scoreRound(
     }
 
     const wrongMeldPenalty = wrongMeldPenaltyByTeam[team.id] ?? 0
+    const emptyHandFoulPenalty = emptyHandFoulByTeam[team.id] ?? 0
 
     const total =
       meldPoints +
@@ -65,7 +67,8 @@ export function scoreRound(
       showBonus +
       zeroCanastaPenalty +
       unclaimedPozzettoPenalty +
-      wrongMeldPenalty
+      wrongMeldPenalty +
+      emptyHandFoulPenalty
 
     result[team.id] = {
       teamId: team.id,
@@ -76,6 +79,7 @@ export function scoreRound(
       zeroCanastaPenalty,
       unclaimedPozzettoPenalty,
       wrongMeldPenalty,
+      emptyHandFoulPenalty,
       total,
     }
   }

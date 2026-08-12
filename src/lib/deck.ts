@@ -66,3 +66,22 @@ export function sortHand(hand: CardModel[]): CardModel[] {
     return rankOrder.indexOf(a.rank) - rankOrder.indexOf(b.rank)
   })
 }
+
+/** Suit groups, ranks ascending within each suit (same as {@link sortHand}). */
+export function sortHandBySuit(hand: CardModel[]): CardModel[] {
+  return sortHand(hand)
+}
+
+/**
+ * Rank groups ascending (A,2,3…K, then Jokers), duplicates clustered.
+ * Within a rank, suits stay in a stable clubs→… order for readability.
+ */
+export function sortHandByRank(hand: CardModel[]): CardModel[] {
+  const rankOrder: Rank[] = [...RANKS, 'JOKER']
+  const suitOrder = [...SUITS, null as null]
+  return [...hand].sort((a, b) => {
+    const rankDiff = rankOrder.indexOf(a.rank) - rankOrder.indexOf(b.rank)
+    if (rankDiff !== 0) return rankDiff
+    return suitOrder.indexOf(a.suit) - suitOrder.indexOf(b.suit)
+  })
+}

@@ -1,5 +1,5 @@
 import type { CardModel, Meld, PlayerId, Team, TeamId } from '../types/game'
-import { appendToMeld, buildSequence, buildSet } from './meldValidation'
+import { appendToMeld, buildSequence, buildSet, type AppendContext } from './meldValidation'
 
 export const TOP_TOUCH_FAILURE_PENALTY = 150
 
@@ -85,7 +85,8 @@ export function performTopTouch(params: {
     // Top Touch is a single atomic action, so if placing the top card would
     // trigger a Slide, default to the top edge automatically rather than
     // pausing for a UI prompt mid-pickup.
-    const result = appendToMeld(meld, topCard, 'top')
+    const appendCtx: AppendContext = { team, handSize: hand.length + 1 }
+    const result = appendToMeld(meld, topCard, 'top', appendCtx)
     if (!result.ok) {
       return {
         success: false,
@@ -174,12 +175,13 @@ export type MeldActionResult =
   | { ok: false; error: string; needsSlideChoice?: { displacedWildCardId: string } }
 
 /**
- * Resolves a Top Touch selection into the ordered list of discard cards it
- * refers to. The top card must be included; other selected cards may be any
- * subset of the pile (including non-contiguous). Unknown ids are rejected.
+ * Top Touch invariant (humans and bots): picking up the discard pile requires
+ * that the unlocking meld/append includes the current top discard card.
  */
-function resolveTopTouchCards(selection: TopTouchSelection): { ok: true; cards: CardModel[] } | { ok: false; error: string } {
-  const { discardPile, selectedDiscardIds } = selection
+export function topDiscardMustBePlayed(
+  discardPile: CardModel[],
+  selectedDiscardIds: string[],
+): { ok: true; topCard: CardModel } | { ok: false; error: string } {
   if (discardPile.length === 0) {
     return { ok: false, error: 'Discard pile is empty.' }
   }
@@ -190,6 +192,18 @@ function resolveTopTouchCards(selection: TopTouchSelection): { ok: true; cards: 
   if (!selectedDiscardIds.includes(topCard.id)) {
     return { ok: false, error: 'The top discard card must be included in the meld.' }
   }
+  return { ok: true, topCard }
+}
+
+/**
+ * Resolves a Top Touch selection into the ordered list of discard cards it
+ * refers to. The top card must be included; other selected cards may be any
+ * subset of the pile (including non-contiguous). Unknown ids are rejected.
+ */
+function resolveTopTouchCards(selection: TopTouchSelection): { ok: true; cards: CardModel[] } | { ok: false; error: string } {
+  const { discardPile, selectedDiscardIds } = selection
+  const topCheck = topDiscardMustBePlayed(discardPile, selectedDiscardIds)
+  if (!topCheck.ok) return topCheck
 
   const selectedSet = new Set(selectedDiscardIds)
   if (selectedSet.size !== selectedDiscardIds.length) {
@@ -255,8 +269,10 @@ export function attemptMeldAction(params: MeldActionParams): MeldActionResult {
     const effectiveSlideEdge = slideEdge ?? (autoResolveSlide ? 'top' : undefined)
 
     let working = meld
+    // Limpa exception uses hand size before each append (1 = last card).
+    let handSize = hand.length
     for (const card of candidateCards) {
-      const result = appendToMeld(working, card, effectiveSlideEdge)
+      const result = appendToMeld(working, card, effectiveSlideEdge, { team, handSize })
       if (!result.ok) {
         if (result.needsSlideChoice && !autoResolveSlide) {
           return { ok: false, error: result.error, needsSlideChoice: result.needsSlideChoice }
@@ -264,6 +280,8 @@ export function attemptMeldAction(params: MeldActionParams): MeldActionResult {
         return { ok: false, error: result.error }
       }
       working = result.meld
+      // Hand cards reduce handSize; Top Touch discard cards do not.
+      if (selectedHandCardIds.includes(card.id)) handSize -= 1
     }
     return { ok: true, kind: 'append', hand: remainingHand, meld: working, usedDiscardCards: topTouchCards }
   }
@@ -302,12 +320,14 @@ export function appendCardFromHand(
   cardId: string,
   meld: Meld,
   slideEdge?: 'top' | 'bottom',
+  team?: Team,
 ):
   | { ok: true; hand: CardModel[]; meld: Meld }
   | { ok: false; error: string; needsSlideChoice?: { displacedWildCardId: string } } {
   const card = hand.find((c) => c.id === cardId)
   if (!card) return { ok: false, error: 'Card not in hand.' }
-  const result = appendToMeld(meld, card, slideEdge)
+  const ctx: AppendContext | undefined = team ? { team, handSize: hand.length } : undefined
+  const result = appendToMeld(meld, card, slideEdge, ctx)
   if (!result.ok) return { ok: false, error: result.error, needsSlideChoice: result.needsSlideChoice }
   const remainingHand = hand.filter((c) => c.id !== cardId)
   return { ok: true, hand: remainingHand, meld: result.meld }

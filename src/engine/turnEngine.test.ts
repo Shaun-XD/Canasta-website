@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Team } from '../types/game'
-import { attemptMeldAction, performDiscard, performDrawFromStock, performTopTouch } from './turnEngine'
+import {
+  attemptMeldAction,
+  performDiscard,
+  performDrawFromStock,
+  performTopTouch,
+  topDiscardMustBePlayed,
+} from './turnEngine'
 import { buildSequence, buildSet } from './meldValidation'
 import { initialPozzettoState } from './pozzetto'
 import { c, joker } from './testHelpers'
@@ -276,6 +282,13 @@ describe('attemptMeldAction (the unified "Meld" action - items 3, 5 & 8)', () =>
       topTouch: { discardPile, selectedDiscardIds: [discardPile[2].id] },
     })
     expect(result.ok).toBe(false)
+  })
+
+  it('topDiscardMustBePlayed encodes the Top Touch top-card invariant', () => {
+    const pile = [c('3', 'hearts'), c('9', 'spades')]
+    expect(topDiscardMustBePlayed(pile, [pile[0].id]).ok).toBe(false)
+    expect(topDiscardMustBePlayed(pile, [pile[1].id]).ok).toBe(true)
+    expect(topDiscardMustBePlayed(pile, [pile[0].id, pile[1].id]).ok).toBe(true)
   })
 
   it('allows a non-contiguous Top Touch discard selection (e.g. two 6s with a gap) when the top card is included', () => {

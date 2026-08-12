@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   AI_WEIGHTS,
+  actionRetainFloor,
+  aiTopTouchPlaysTopCard,
+  bridgeReservedCardIds,
+  classifyRemainderVitality,
+  defaultAiContext,
+  isEssentialWildAppend,
+  isHighProbabilityWildExtend,
+  isHopelessNewSetRank,
   planAiAppends,
   planAiDraw,
   planAiMelds,
@@ -8,8 +16,10 @@ import {
   pickAiDiscard,
   scoreNewMeld,
   scoreTopTouchUnlock,
+  scoreVitalRemainder,
+  vitalJustifiesWildUnlock,
 } from './aiPlayer'
-import { buildSequence, buildSet } from './meldValidation'
+import { appendToMeld, buildSequence, buildSet } from './meldValidation'
 import { c, joker } from './testHelpers'
 describe('scoreNewMeld (plus-sum)', () => {
   it('scores larger / higher-point melds higher', () => {
@@ -26,8 +36,8 @@ describe('scoreNewMeld (plus-sum)', () => {
   })
 })
 
-describe('planAiMelds — always meld when legal', () => {
-  it('lays a natural set of 3+', () => {
+describe('planAiMelds — methodical lays (not dump-everything)', () => {
+  it('lays a natural set of 3+ when the rank is still completable', () => {
     const hand = [c('9', 'hearts'), c('9', 'spades'), c('9', 'clubs'), c('3', 'diamonds')]
     const { plans, remainingHand } = planAiMelds(hand, 'team-a')
     expect(plans).toHaveLength(1)
@@ -36,10 +46,63 @@ describe('planAiMelds — always meld when legal', () => {
     expect(remainingHand).toHaveLength(1)
   })
 
-  it('lays a same-suit sequence when available', () => {
+  it('lays a same-suit sequence when available and not bridging a table run', () => {
     const hand = [c('5', 'clubs'), c('6', 'clubs'), c('7', 'clubs'), c('A', 'hearts')]
     const { plans } = planAiMelds(hand, 'team-a')
     expect(plans.some((p) => p.kind === 'sequence')).toBe(true)
+  })
+
+  it('holds 10-J-Q♠ to bridge an existing 6-7-8♠ instead of opening a new run', () => {
+    const table = buildSequence([c('6', 'spades'), c('7', 'spades'), c('8', 'spades')], 'team-a')
+    if (!table.ok) throw new Error('setup')
+    const ten = c('10', 'spades')
+    const jack = c('J', 'spades')
+    const queen = c('Q', 'spades')
+    const hand = [ten, jack, queen, c('3', 'hearts')]
+    const reserved = bridgeReservedCardIds(hand, [table.meld])
+    expect(reserved.has(ten.id)).toBe(true)
+    expect(reserved.has(jack.id)).toBe(true)
+    expect(reserved.has(queen.id)).toBe(true)
+
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a', [table.meld])
+    expect(plans.filter((p) => p.kind === 'sequence')).toHaveLength(0)
+    expect(remainingHand.map((card) => card.id)).toEqual(
+      expect.arrayContaining([ten.id, jack.id, queen.id]),
+    )
+  })
+
+  it('does not open a hopeless Ace set when opponents already locked most Aces', () => {
+    const enemy = buildSet(
+      [c('A', 'hearts'), c('A', 'spades'), c('A', 'clubs'), c('A', 'diamonds')],
+      'team-b',
+    )
+    if (!enemy.ok) throw new Error('setup')
+    const hand = [c('A', 'hearts'), c('A', 'spades'), c('A', 'clubs'), c('3', 'diamonds')]
+    const ctx = {
+      ...defaultAiContext('team-a'),
+      opponentMelds: [enemy.meld],
+    }
+    expect(isHopelessNewSetRank('A', 3, ctx)).toBe(true)
+
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a', [], ctx)
+    expect(plans.filter((p) => p.kind === 'set')).toHaveLength(0)
+    expect(remainingHand.filter((card) => card.rank === 'A')).toHaveLength(3)
+  })
+
+  it('prefers discarding a hopeless Ace over breaking a valuable near-meld pair', () => {
+    const enemy = buildSet(
+      [c('A', 'hearts'), c('A', 'spades'), c('A', 'clubs'), c('A', 'diamonds')],
+      'team-b',
+    )
+    if (!enemy.ok) throw new Error('setup')
+    const ace = c('A', 'hearts')
+    const hand = [ace, c('A', 'spades'), c('A', 'clubs'), c('K', 'hearts'), c('K', 'spades')]
+    const ctx = {
+      ...defaultAiContext('team-a'),
+      opponentMelds: [enemy.meld],
+    }
+    const pick = pickAiDiscard(hand, ctx)
+    expect(pick?.rank).toBe('A')
   })
 
   it('prefers an all-natural set over the same set that burns a wild', () => {
@@ -238,6 +301,30 @@ describe('planAiDraw — Top Touch only when plus-sum positive', () => {
     expect(plan.targetMeldId).toBe(built.meld.id)
   })
 
+  it('never plans a Top Touch that omits the top discard card', () => {
+    const buriedUseful = c('8', 'spades')
+    const topJunk = c('3', 'diamonds')
+    const pile = [buriedUseful, topJunk]
+    const run = buildSequence([c('5', 'spades'), c('6', 'spades'), c('7', 'spades')], 'team-a')
+    if (!run.ok) throw new Error('setup')
+    // Hand cannot unlock the junk top; buried 8 would append — must NOT scoop.
+    const plan = planAiDraw([c('4', 'hearts'), c('9', 'clubs')], [run.meld], pile, 'team-a')
+    expect(plan.source).toBe('stock')
+    expect(aiTopTouchPlaysTopCard(pile, [buriedUseful.id])).toBe(false)
+    expect(aiTopTouchPlaysTopCard(pile, [topJunk.id])).toBe(true)
+  })
+
+  it('every positive Top Touch plan includes the top card in selectedDiscardIds', () => {
+    const a = c('9', 'hearts')
+    const b = c('9', 'spades')
+    const top = c('9', 'clubs')
+    const deep = c('8', 'spades')
+    const plan = planAiDraw([a, b], [], [deep, top], 'team-a')
+    expect(plan.source).toBe('top-touch')
+    expect(aiTopTouchPlaysTopCard([deep, top], plan.selectedDiscardIds)).toBe(true)
+    expect(plan.selectedDiscardIds).toContain(top.id)
+  })
+
   it('scores a rich remainder pile higher than a barren one for the same unlock', () => {
     const a = c('6', 'hearts')
     const b = c('6', 'spades')
@@ -257,6 +344,96 @@ describe('planAiDraw — Top Touch only when plus-sum positive', () => {
   })
 })
 
+describe('Top Touch vitality — critical deep cards vs ordinary connectors', () => {
+  it('classifies canasta-finish and near-canasta Slides as critical', () => {
+    let near = buildSet([c('9', 'hearts'), c('9', 'spades'), c('9', 'clubs')], 'team-a')
+    if (!near.ok) throw new Error('setup')
+    for (const suit of ['diamonds', 'hearts', 'spades'] as const) {
+      const res = appendToMeld(near.meld, c('9', suit))
+      if (!res.ok) throw new Error(res.error)
+      near = { ok: true, meld: res.meld }
+    }
+    expect(near.meld.slots.length).toBe(6)
+    expect(classifyRemainderVitality(c('9', 'clubs'), [near.meld]).tier).toBe('critical')
+
+    const run = buildSequence(
+      [c('6', 'spades'), c('2', 'hearts'), c('8', 'spades'), c('9', 'spades'), c('10', 'spades')],
+      'team-a',
+    )
+    if (!run.ok) throw new Error('setup')
+    expect(classifyRemainderVitality(c('7', 'spades'), [run.meld]).tier).toBe('critical')
+  })
+
+  it('classifies a mere short-run edge extend as useful, not critical', () => {
+    const run = buildSequence([c('5', 'spades'), c('6', 'spades'), c('7', 'spades')], 'team-a')
+    if (!run.ok) throw new Error('setup')
+    expect(classifyRemainderVitality(c('8', 'spades'), [run.meld]).tier).toBe('useful')
+  })
+
+  it('scoops a junk top to reach a buried canasta-finish card', () => {
+    let near = buildSet([c('Q', 'hearts'), c('Q', 'spades'), c('Q', 'clubs')], 'team-a')
+    if (!near.ok) throw new Error('setup')
+    for (const suit of ['diamonds', 'hearts', 'spades'] as const) {
+      const res = appendToMeld(near.meld, c('Q', suit))
+      if (!res.ok) throw new Error(res.error)
+      near = { ok: true, meld: res.meld }
+    }
+    const buriedQueen = c('Q', 'diamonds')
+    const topJunk = c('4', 'clubs')
+    const hand = [c('4', 'hearts'), c('4', 'spades')]
+    const plan = planAiDraw(hand, [near.meld], [buriedQueen, c('3', 'diamonds'), topJunk], 'team-a')
+    expect(plan.source).toBe('top-touch')
+    expect(plan.selectedDiscardIds).toContain(topJunk.id)
+    expect(plan.selectedDiscardIds).not.toContain(buriedQueen.id)
+  })
+
+  it('does not scoop a junk top just for an ordinary short-meld connector', () => {
+    const run = buildSequence([c('5', 'spades'), c('6', 'spades'), c('7', 'spades')], 'team-a')
+    if (!run.ok) throw new Error('setup')
+    const buriedEight = c('8', 'spades')
+    const topJunk = c('3', 'diamonds')
+    const hand = [c('3', 'hearts'), c('3', 'clubs'), c('9', 'hearts')]
+    const plan = planAiDraw(hand, [run.meld], [buriedEight, topJunk], 'team-a')
+    expect(plan.source).toBe('stock')
+  })
+
+  it('allows burning a joker to unlock only when remainder has critical vitality', () => {
+    let near = buildSet([c('K', 'hearts'), c('K', 'spades'), c('K', 'clubs')], 'team-a')
+    if (!near.ok) throw new Error('setup')
+    for (const suit of ['diamonds', 'hearts', 'spades'] as const) {
+      const res = appendToMeld(near.meld, c('K', suit))
+      if (!res.ok) throw new Error(res.error)
+      near = { ok: true, meld: res.meld }
+    }
+    const buriedKing = c('K', 'diamonds')
+    const topJunk = c('5', 'clubs')
+    const wild = joker()
+    const hand = [c('5', 'hearts'), wild, c('3', 'spades')]
+    const vital = scoreVitalRemainder([buriedKing], [near.meld])
+    expect(vital.maxTier).toBe('critical')
+    expect(vitalJustifiesWildUnlock(vital, 1)).toBe(true)
+
+    const plan = planAiDraw(hand, [near.meld], [buriedKing, topJunk], 'team-a')
+    expect(plan.source).toBe('top-touch')
+    expect(plan.handCardIds).toContain(wild.id)
+  })
+
+  it('refuses to burn a joker to unlock for a merely useful connector', () => {
+    const run = buildSequence([c('5', 'spades'), c('6', 'spades'), c('7', 'spades')], 'team-a')
+    if (!run.ok) throw new Error('setup')
+    const buriedEight = c('8', 'spades')
+    const topJunk = c('5', 'clubs')
+    const wild = joker()
+    const hand = [c('5', 'hearts'), wild, c('3', 'diamonds')]
+    const vital = scoreVitalRemainder([buriedEight], [run.meld])
+    expect(vital.maxTier).toBe('useful')
+    expect(vitalJustifiesWildUnlock(vital, 1)).toBe(false)
+
+    const plan = planAiDraw(hand, [run.meld], [buriedEight, topJunk], 'team-a')
+    expect(plan.source).toBe('stock')
+  })
+})
+
 describe('pickAiDiscard', () => {
   it('avoids discarding wilds when a natural exists', () => {
     const hand = [joker(), c('4', 'clubs')]
@@ -269,6 +446,93 @@ describe('pickAiDiscard', () => {
     const singleton = c('3', 'clubs')
     const pick = pickAiDiscard([pairA, pairB, singleton])
     expect(pick?.id).toBe(singleton.id)
+  })
+
+  it('avoids discarding a card opponents can append (public melds only)', () => {
+    const oppRun = buildSequence(
+      [c('J', 'spades'), c('Q', 'spades'), c('K', 'spades')],
+      'team-b',
+    )
+    if (!oppRun.ok) throw new Error('setup')
+    const aceSpades = c('A', 'spades')
+    const junk = c('3', 'clubs')
+    const ctx = {
+      ...defaultAiContext('team-a'),
+      opponentMelds: [oppRun.meld],
+    }
+    const pick = pickAiDiscard([aceSpades, junk], ctx)
+    expect(pick?.id).toBe(junk.id)
+  })
+})
+
+describe('hand floor after Pozzetto', () => {
+  it('retains 2 cards when Pozzetto is claimed and Show is not available', () => {
+    const ctx = {
+      ...defaultAiContext('team-a'),
+      pozzettoClaimed: true,
+      mayEmptyForShow: false,
+    }
+    expect(actionRetainFloor(ctx)).toBe(2)
+
+    const existing = buildSet([c('8', 'hearts'), c('8', 'spades'), c('8', 'clubs')], 'team-a')
+    if (!existing.ok) throw new Error('setup')
+    // 3 eights would empty the hand — must keep 2 for discard+keep.
+    const hand = [c('8', 'diamonds'), c('8', 'hearts'), c('3', 'clubs')]
+    const { plans, remainingHand } = planAiAppends(hand, [existing.meld], {
+      ...ctx,
+      ownMelds: [existing.meld],
+    })
+    // At most one eight appended (hand 3 → 2).
+    expect(plans.length).toBeLessThanOrEqual(1)
+    expect(remainingHand.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not casually append a wild onto a short sequence', () => {
+    const run = buildSequence([c('5', 'hearts'), c('6', 'hearts'), c('7', 'hearts')], 'team-a')
+    if (!run.ok) throw new Error('setup')
+    const hand = [joker(), c('3', 'clubs'), c('4', 'clubs'), c('9', 'spades')]
+    const { plans } = planAiAppends(hand, [run.meld], defaultAiContext('team-a', [run.meld]))
+    expect(plans.every((p) => p.cardId !== hand[0].id)).toBe(true)
+  })
+
+  it('treats canasta finish and dry high-odds sets as essential wild uses', () => {
+    let near = buildSet([c('9', 'hearts'), c('9', 'spades'), c('9', 'clubs')], 'team-a')
+    if (!near.ok) throw new Error('setup')
+    for (const suit of ['diamonds', 'hearts', 'spades'] as const) {
+      const res = appendToMeld(near.meld, c('9', suit))
+      if (!res.ok) throw new Error(res.error)
+      near = { ok: true, meld: res.meld }
+    }
+    expect(near.meld.slots.length).toBe(6)
+    expect(isEssentialWildAppend(joker(), near.meld)).toBe(true)
+
+    let dry = buildSet([c('6', 'hearts'), c('6', 'spades'), c('6', 'clubs')], 'team-a')
+    if (!dry.ok) throw new Error('setup')
+    for (const suit of ['diamonds', 'hearts'] as const) {
+      const res = appendToMeld(dry.meld, c('6', suit))
+      if (!res.ok) throw new Error(res.error)
+      dry = { ok: true, meld: res.meld }
+    }
+    expect(dry.meld.slots.length).toBe(5)
+    const ctx = defaultAiContext('team-a', [dry.meld])
+    expect(isHighProbabilityWildExtend(dry.meld, ctx)).toBe(true)
+    expect(isEssentialWildAppend(joker(), dry.meld, ctx)).toBe(true)
+  })
+
+  it('does not plan a wild onto a Limpa', () => {
+    let limpa = buildSequence([c('3', 'clubs'), c('4', 'clubs'), c('5', 'clubs')], 'team-a')
+    if (!limpa.ok) throw new Error('setup')
+    for (const rank of ['6', '7', '8', '9'] as const) {
+      const res = appendToMeld(limpa.meld, c(rank, 'clubs'))
+      if (!res.ok) throw new Error(res.error)
+      limpa = { ok: true, meld: res.meld }
+    }
+    const hand = [joker(), c('3', 'hearts'), c('4', 'spades')]
+    const { plans } = planAiAppends(hand, [limpa.meld], {
+      ...defaultAiContext('team-a', [limpa.meld]),
+      handSize: hand.length,
+    })
+    expect(plans.every((p) => p.cardId !== hand[0].id)).toBe(true)
   })
 })
 

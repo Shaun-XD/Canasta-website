@@ -14,6 +14,8 @@ import { RoundEndModal } from '../components/RoundEndModal'
 import { useCountdown } from '../hooks/useCountdown'
 import { seedFlipOrigin } from '../hooks/useCardFlip'
 import { useHandReorder } from '../hooks/useHandReorder'
+import { HandSortButtons, type HandSortMode } from '../components/HandSortButtons'
+import { sortHandByRank, sortHandBySuit } from '../lib/deck'
 import { evaluateShowEligibility, unmetShowConditions } from '../engine/showEligibility'
 import type { Player, Team } from '../types/game'
 
@@ -168,11 +170,18 @@ export function Table() {
   // unconditionally (before any early returns) per the rules of hooks - the
   // id list is simply empty until the table/hand actually exists.
   const rawLocalHand = game && localPlayerId ? game.hands[localPlayerId] ?? [] : []
-  const { order: handOrder, draggingId, handlePointerDown: handleCardPointerDown, handlePointerEnter: handleCardPointerEnter } =
-    useHandReorder(rawLocalHand.map((c) => c.id))
+  const {
+    order: handOrder,
+    draggingId,
+    handlePointerDown: handleCardPointerDown,
+    handlePointerEnter: handleCardPointerEnter,
+    applyOrder: applyHandOrder,
+  } = useHandReorder(rawLocalHand.map((c) => c.id))
+  const [handSortMode, setHandSortMode] = useState<HandSortMode | null>('suit')
 
   useEffect(() => {
     if (draggingId == null) isReorderingRef.current = false
+    else setHandSortMode(null) // manual drag clears the active auto-sort highlight
   }, [draggingId])
 
   if (!room || room.roomId !== roomId) return <Navigate to="/" replace />
@@ -234,6 +243,16 @@ export function Table() {
     if (!isDrawPhase) return reportInvalidAction('You can only Top Touch during your draw phase.')
     if (!topDiscard) return reportInvalidAction('The discard pile is empty.')
     beginTopTouch()
+  }
+
+  function handleSortHandBySuit() {
+    applyHandOrder(sortHandBySuit(localHand).map((c) => c.id))
+    setHandSortMode('suit')
+  }
+
+  function handleSortHandByRank() {
+    applyHandOrder(sortHandByRank(localHand).map((c) => c.id))
+    setHandSortMode('rank')
   }
 
   const teamRed = room.teams.find((t) => t.id === 'team-a') ?? room.teams[0]
@@ -521,57 +540,66 @@ export function Table() {
             )}
           </div>
 
-          <div
-            ref={handRailRef}
-            className="hand-rail mx-auto w-full max-w-full justify-center overflow-visible"
-            style={{ maxWidth: HAND_MAX_FAN_WIDTH }}
-            data-flip-anchor={localPlayerId ? `hand-${localPlayerId}` : undefined}
-            onPointerLeave={() => {
-              if (!draggingId) setHoveredHandId(null)
-            }}
-          >
-            <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
-            {orderedLocalHand.map((card, i) => {
-              // Only the touched/dragged card enlarges — never neighbors swept during reorder.
-              const isActiveLift = draggingId === card.id || (!draggingId && hoveredHandId === card.id)
-              return (
-                <div
-                  key={card.id}
-                  onPointerDown={() => {
-                    isReorderingRef.current = true
-                    handleCardPointerDown(card.id)
-                    setHoveredHandId(card.id)
-                  }}
-                  onPointerEnter={() => {
-                    handleCardPointerEnter(card.id)
-                    // While reordering, pointerenter fires on every card we swap past —
-                    // do not treat those as hovered/enlarged.
-                    if (!isReorderingRef.current) setHoveredHandId(card.id)
-                  }}
-                  className={`relative shrink-0 touch-none transition-opacity duration-150 ${
-                    draggingId === card.id ? 'opacity-90' : ''
-                  }`}
-                  style={{
-                    marginLeft: i === 0 ? 0 : -handOverlap,
-                    zIndex: isActiveLift ? 80 : i,
-                  }}
-                >
-                  <AnimatedCard
-                    flipId={card.id}
-                    rank={card.rank}
-                    suit={card.suit}
-                    width={HAND_CARD_WIDTH}
-                    selected={selectedCardIds.includes(card.id)}
-                    isNew={isRecentlyAcquired(card.id)}
-                    onClick={() => toggleSelectCard(card.id)}
-                    className="hover:!translate-y-0"
-                    wrapperClassName={`transition-transform duration-150 ease-out ${
-                      isActiveLift ? '-translate-y-4 scale-110' : ''
-                    }`}
-                  />
-                </div>
-              )
-            })}
+          <div className="mx-auto flex w-full max-w-full items-end justify-center gap-2 px-1 sm:gap-2.5">
+            <div
+              ref={handRailRef}
+              className="hand-rail min-w-0 justify-center overflow-visible"
+              style={{ maxWidth: HAND_MAX_FAN_WIDTH }}
+              data-flip-anchor={localPlayerId ? `hand-${localPlayerId}` : undefined}
+              onPointerLeave={() => {
+                if (!draggingId) setHoveredHandId(null)
+              }}
+            >
+              <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
+                {orderedLocalHand.map((card, i) => {
+                  // Only the touched/dragged card enlarges — never neighbors swept during reorder.
+                  const isActiveLift = draggingId === card.id || (!draggingId && hoveredHandId === card.id)
+                  return (
+                    <div
+                      key={card.id}
+                      onPointerDown={() => {
+                        isReorderingRef.current = true
+                        handleCardPointerDown(card.id)
+                        setHoveredHandId(card.id)
+                      }}
+                      onPointerEnter={() => {
+                        handleCardPointerEnter(card.id)
+                        // While reordering, pointerenter fires on every card we swap past —
+                        // do not treat those as hovered/enlarged.
+                        if (!isReorderingRef.current) setHoveredHandId(card.id)
+                      }}
+                      className={`relative shrink-0 touch-none transition-opacity duration-150 ${
+                        draggingId === card.id ? 'opacity-90' : ''
+                      }`}
+                      style={{
+                        marginLeft: i === 0 ? 0 : -handOverlap,
+                        zIndex: isActiveLift ? 80 : i,
+                      }}
+                    >
+                      <AnimatedCard
+                        flipId={card.id}
+                        rank={card.rank}
+                        suit={card.suit}
+                        width={HAND_CARD_WIDTH}
+                        selected={selectedCardIds.includes(card.id)}
+                        isNew={isRecentlyAcquired(card.id)}
+                        onClick={() => toggleSelectCard(card.id)}
+                        className="hover:!translate-y-0"
+                        wrapperClassName={`transition-transform duration-150 ease-out ${
+                          isActiveLift ? '-translate-y-4 scale-110' : ''
+                        }`}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="mb-1 shrink-0">
+              <HandSortButtons
+                activeMode={handSortMode}
+                onSortSuit={handleSortHandBySuit}
+                onSortRank={handleSortHandByRank}
+              />
             </div>
           </div>
 

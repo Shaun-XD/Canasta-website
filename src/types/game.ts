@@ -231,6 +231,8 @@ export interface TeamRoundScore {
   zeroCanastaPenalty: number
   unclaimedPozzettoPenalty: number
   wrongMeldPenalty: number
+  /** Illegal empty-hand after Pozzetto (not Show): typically -150 per foul. */
+  emptyHandFoulPenalty: number
   total: number
 }
 
@@ -271,6 +273,11 @@ export interface GameState {
   gameOverTeamId: TeamId | null
   /** Most recent card(s) added to a player's hand; drives the "new card" glow highlight. */
   lastAcquired: AcquiredCardsEvent | null
+  /**
+   * Accumulated empty-hand foul penalties this round (negative), applied at
+   * round end. Illegal empty after Pozzetto without Show eligibility.
+   */
+  emptyHandFoulByTeam: Record<TeamId, number>
 }
 
 export const SUITS: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades']

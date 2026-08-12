@@ -12,6 +12,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
  * card movement is animated by the existing FLIP `useCardFlip` hook, since
  * every card keeps rendering through `AnimatedCard` with the same `flipId`
  * regardless of its position in the row.
+ *
+ * Auto-arrange buttons call {@link applyOrder} with a new id sequence;
+ * FLIP then flies each card into its new slot.
  */
 export function useHandReorder(cardIds: string[]) {
   const [order, setOrder] = useState<string[]>(cardIds)
@@ -65,6 +68,20 @@ export function useHandReorder(cardIds: string[]) {
     setDraggingId(null)
   }
 
+  /** Replace display order (e.g. suit / rank auto-sort). FLIP animates the move. */
+  function applyOrder(nextIds: string[]) {
+    const held = new Set(cardIds)
+    const cleaned = nextIds.filter((id) => held.has(id))
+    // Append any missing ids (shouldn't happen) to stay in sync with the hand.
+    for (const id of cardIds) {
+      if (!cleaned.includes(id)) cleaned.push(id)
+    }
+    setOrder((prev) => {
+      const same = cleaned.length === prev.length && cleaned.every((id, i) => id === prev[i])
+      return same ? prev : cleaned
+    })
+  }
+
   useEffect(() => {
     if (draggingId == null) return
     window.addEventListener('pointerup', endDrag)
@@ -75,5 +92,5 @@ export function useHandReorder(cardIds: string[]) {
     }
   }, [draggingId])
 
-  return { order, draggingId, handlePointerDown, handlePointerEnter }
+  return { order, draggingId, handlePointerDown, handlePointerEnter, applyOrder }
 }

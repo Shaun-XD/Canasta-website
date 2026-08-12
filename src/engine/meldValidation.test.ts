@@ -561,3 +561,91 @@ describe('the Slide mechanic', () => {
     expect(bottomSlot.slotRank).toBe('4')
   })
 })
+
+describe('Limpa wild protection', () => {
+  function makeLimpaClubs(): ReturnType<typeof buildSequence> {
+    let m = buildSequence([c('3', 'clubs'), c('4', 'clubs'), c('5', 'clubs')], 'team-a')
+    if (!m.ok) throw new Error('setup failed')
+    for (const rank of ['6', '7', '8', '9'] as const) {
+      const res = appendToMeld(m.meld, c(rank, 'clubs'))
+      if (!res.ok) throw new Error(res.error)
+      m = { ok: true, meld: res.meld }
+    }
+    return m
+  }
+
+  it('rejects spoiling a Limpa with a wild when no exception context is provided', () => {
+    const limpa = makeLimpaClubs()
+    if (!limpa.ok) throw new Error('setup')
+    expect(canAppendToMeld(limpa.meld, joker())).toBe(false)
+    const res = appendToMeld(limpa.meld, joker())
+    expect(res.ok).toBe(false)
+  })
+
+  it('allows the ≥400 / last-card / only-wild-slot exception', () => {
+    const limpa = makeLimpaClubs()
+    if (!limpa.ok) throw new Error('setup')
+    // Second limpa for 400 bonus; one mixed canasta that already used its wild.
+    let limpa2 = buildSequence([c('3', 'hearts'), c('4', 'hearts'), c('5', 'hearts')], 'team-a')
+    if (!limpa2.ok) throw new Error('setup')
+    for (const rank of ['6', '7', '8', '9'] as const) {
+      const res = appendToMeld(limpa2.meld, c(rank, 'hearts'))
+      if (!res.ok) throw new Error(res.error)
+      limpa2 = { ok: true, meld: res.meld }
+    }
+    const mixed = buildSet([c('K', 'hearts'), c('K', 'spades'), joker()], 'team-a')
+    if (!mixed.ok) throw new Error('setup')
+    let mixedMeld = mixed.meld
+    for (const suit of ['clubs', 'diamonds', 'hearts', 'spades'] as const) {
+      const res = appendToMeld(mixedMeld, c('K', suit))
+      if (!res.ok) throw new Error(res.error)
+      mixedMeld = res.meld
+    }
+
+    const team = {
+      id: 'team-a' as const,
+      name: 'A',
+      playerIds: [] as string[],
+      melds: [limpa.meld, limpa2.meld, mixedMeld],
+      score: 0,
+      hasGoneOut: false,
+      pozzetto: { claimed: true, claimedByPlayerId: 'p1', activated: true },
+    }
+    // limpa2 still has wildCount 0 — exception must fail.
+    expect(canAppendToMeld(limpa.meld, joker(), { team, handSize: 1 })).toBe(false)
+
+    // Give limpa2 a wild so every other pile has a wild used; bonus stays ≥400
+    // after converting one limpa (200→100) because the other limpa remains.
+    const spoiled = appendToMeld(limpa2.meld, joker(), 'top', {
+      team: { ...team, melds: [limpa.meld, limpa2.meld, mixedMeld] },
+      handSize: 1,
+    })
+    // Can't spoil limpa2 either while limpa has no wild — same rule.
+    expect(spoiled.ok).toBe(false)
+
+    // Pretend limpa2 was already mixed (wild used) with same length.
+    const limpa2AsMixed = {
+      ...limpa2.meld,
+      wildCount: 1,
+      classification: 'mixed-canasta' as const,
+      canBecomeLimpa: false,
+    }
+    const teamReady = {
+      ...team,
+      melds: [limpa.meld, limpa2AsMixed, mixedMeld],
+    }
+    // Bonuses: limpa 200 + mixed 100 + mixed 100 = 400.
+    expect(canAppendToMeld(limpa.meld, joker(), { team: teamReady, handSize: 1 })).toBe(true)
+    expect(canAppendToMeld(limpa.meld, joker(), { team: teamReady, handSize: 2 })).toBe(false)
+  })
+
+  it('treats a same-suit natural 2 edge as natural (does not spoil Limpa)', () => {
+    // Build 3-4-5-6-7-8-9 limpa; natural 2♣ extends the low end.
+    const limpa = makeLimpaClubs()
+    if (!limpa.ok) throw new Error('setup')
+    expect(canAppendToMeld(limpa.meld, c('2', 'clubs'))).toBe(true)
+    const res = appendToMeld(limpa.meld, c('2', 'clubs'))
+    expect(res.ok).toBe(true)
+    if (res.ok) expect(res.meld.classification).toBe('limpa')
+  })
+})
