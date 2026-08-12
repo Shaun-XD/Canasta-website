@@ -65,6 +65,7 @@ export async function socketCreateRoom(opts: {
   playerName: string
   targetScore?: number
   turnTimerSeconds?: number
+  maxPlayers?: number
 }): Promise<RoomAck> {
   return emitAck('room:create', opts)
 }
@@ -85,20 +86,24 @@ export function socketSetSeat(seat: number): void {
   connectSocket().emit('room:setSeat', { seat })
 }
 
-export function socketSetReady(ready?: boolean): void {
-  connectSocket().emit('room:setReady', ready === undefined ? {} : { ready })
+export function socketSetReady(ready?: boolean): Promise<RoomAck> {
+  return emitAck('room:setReady', ready === undefined ? {} : { ready })
 }
 
-export function socketSetTimer(seconds: number): void {
-  connectSocket().emit('room:setTimer', { seconds })
+export function socketSetTimer(seconds: number): Promise<RoomAck> {
+  return emitAck('room:setTimer', { seconds })
+}
+
+export function socketSetMaxPlayers(maxPlayers: number): Promise<RoomAck> {
+  return emitAck('room:setMaxPlayers', { maxPlayers })
 }
 
 export function socketSetTarget(score: number): void {
   connectSocket().emit('room:setTarget', { score })
 }
 
-export function socketStartGame(): void {
-  connectSocket().emit('room:start')
+export async function socketStartGame(): Promise<RoomAck> {
+  return emitAck('room:start')
 }
 
 export function socketDraw(): void {
@@ -162,6 +167,8 @@ export function bindSocketStoreHandlers(handlers: {
   onRoomState: (room: RoomState, playerId: string) => void
   onGameState: (game: GameState | null, playerId: string) => void
   onActionError: (error: string) => void
+  /** Fired after a transport reconnect — callers should rejoin the room. */
+  onReconnect?: () => void
 }): () => void {
   const s = connectSocket()
   const onRoom = (payload: { room: RoomState; playerId: string }) => {
@@ -173,12 +180,17 @@ export function bindSocketStoreHandlers(handlers: {
   const onErr = (payload: { error: string }) => {
     handlers.onActionError(payload.error)
   }
+  const onReconnect = () => {
+    handlers.onReconnect?.()
+  }
   s.on('room:state', onRoom)
   s.on('game:state', onGame)
   s.on('action:error', onErr)
+  s.io.on('reconnect', onReconnect)
   return () => {
     s.off('room:state', onRoom)
     s.off('game:state', onGame)
     s.off('action:error', onErr)
+    s.io.off('reconnect', onReconnect)
   }
 }

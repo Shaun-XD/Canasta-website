@@ -23,7 +23,7 @@ import type {
   Team,
   TeamId,
 } from '../../src/types/game.ts'
-import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS } from '../../src/types/game.ts'
+import { DEFAULT_TARGET_SCORE, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam } from '../../src/types/game.ts'
 
 const HAND_SIZE = 13
 const POZZETTO_SIZE = 11
@@ -233,6 +233,7 @@ function create_room(params: {
   playerName: string
   targetScore?: number
   turnTimerSeconds?: number
+  maxPlayers?: number
 }): { roomId: string; playerId: string; room: RoomState; game: null } {
   let roomId = makeRoomCode()
   while (sessions.has(roomId)) roomId = makeRoomCode()
@@ -257,10 +258,8 @@ function create_room(params: {
     hostPlayerId: playerId,
     matchTargetScore:
       params.targetScore && params.targetScore > 0 ? Math.round(params.targetScore) : DEFAULT_TARGET_SCORE,
-    turnTimerSeconds:
-      params.turnTimerSeconds && params.turnTimerSeconds >= 10
-        ? Math.round(params.turnTimerSeconds)
-        : DEFAULT_TURN_TIMER_SECONDS,
+    turnTimerSeconds: normalizeTurnTimerSeconds(params.turnTimerSeconds),
+    maxPlayers: normalizeMaxPlayers(params.maxPlayers),
   }
   sessions.set(roomId, { room, game: null })
   return { roomId, playerId, room, game: null }
@@ -274,15 +273,21 @@ function join_room(params: { roomId: string; playerName: string }): {
 } {
   const session = requireSession(params.roomId)
   if (session.room.status !== 'lobby') throw new Error('Game already started.')
-  if (session.room.players.length >= 4) throw new Error('Room is full.')
+  const maxPlayers = normalizeMaxPlayers(session.room.maxPlayers)
+  if (session.room.players.length >= maxPlayers) {
+    throw new Error(
+      `This lobby is set to ${maxPlayers} players and is full.`,
+    )
+  }
 
   const playerId = randomId('p')
   const usedSeats = new Set(session.room.players.map((p) => p.seat))
   let seat = 0
-  while (usedSeats.has(seat) && seat < 4) seat += 1
+  while (usedSeats.has(seat) && seat < maxPlayers) seat += 1
 
+  const perTeam = seatsPerTeam(maxPlayers)
   const teamACount = session.room.players.filter((p) => p.teamId === 'team-a').length
-  const teamId: TeamId = teamACount < 2 ? 'team-a' : 'team-b'
+  const teamId: TeamId = teamACount < perTeam ? 'team-a' : 'team-b'
 
   const player: Player = {
     id: playerId,
@@ -342,10 +347,11 @@ function set_team(params: { roomId: string; playerId: string; teamId: TeamId }):
   const session = requireSession(params.roomId)
   if (session.room.status !== 'lobby') throw new Error('Cannot change team after start.')
   requirePlayer(session, params.playerId)
+  const perTeam = seatsPerTeam(normalizeMaxPlayers(session.room.maxPlayers))
   const count = session.room.players.filter(
     (p) => p.teamId === params.teamId && p.id !== params.playerId,
   ).length
-  if (count >= 2) throw new Error('That team is full.')
+  if (count >= perTeam) throw new Error('That team is full.')
   session.room = rebuildTeamPlayerIds({
     ...session.room,
     players: session.room.players.map((p) =>
@@ -362,7 +368,8 @@ function set_seat(params: { roomId: string; playerId: string; seat: number }): {
   const session = requireSession(params.roomId)
   if (session.room.status !== 'lobby') throw new Error('Cannot change seat after start.')
   requirePlayer(session, params.playerId)
-  const seat = Math.max(0, Math.min(3, Math.round(params.seat)))
+  const maxSeat = normalizeMaxPlayers(session.room.maxPlayers) - 1
+  const seat = Math.max(0, Math.min(maxSeat, Math.round(params.seat)))
   const occupied = session.room.players.find((p) => p.seat === seat)
   const prevSeat = session.room.players.find((p) => p.id === params.playerId)?.seat ?? 0
   session.room = {
@@ -398,7 +405,7 @@ function set_timer(params: { roomId: string; playerId: string; seconds: number }
   if (session.room.hostPlayerId !== params.playerId) throw new Error('Only the host can change the timer.')
   session.room = {
     ...session.room,
-    turnTimerSeconds: Math.max(10, Math.round(params.seconds)),
+    turnTimerSeconds: normalizeTurnTimerSeconds(params.seconds === 0 ? 0 : params.seconds),
   }
   return { room: session.room, game: session.game }
 }
@@ -416,16 +423,43 @@ function set_target(params: { roomId: string; playerId: string; score: number })
   return { room: session.room, game: session.game }
 }
 
+function set_max_players(params: { roomId: string; playerId: string; maxPlayers: number }): {
+  room: RoomState
+  game: GameState | null
+} {
+  const session = requireSession(params.roomId)
+  if (session.room.status !== 'lobby') throw new Error('Cannot change player count after the game starts.')
+  if (session.room.hostPlayerId !== params.playerId) throw new Error('Only the host can change the player count.')
+  const capacity = normalizeMaxPlayers(params.maxPlayers)
+  if (session.room.players.length > capacity) {
+    throw new Error(
+      `Cannot set ${capacity}-player lobby — ${session.room.players.length} players already joined.`,
+    )
+  }
+  session.room = { ...session.room, maxPlayers: capacity }
+  return { room: session.room, game: session.game }
+}
+
 function start_game(params: { roomId: string; playerId: string }): {
   room: RoomState
   game: GameState
 } {
   const session = requireSession(params.roomId)
   if (session.room.hostPlayerId !== params.playerId) throw new Error('Only the host can start.')
-  if (session.room.players.length < 4) throw new Error('Need 4 players to start.')
+  const maxPlayers = normalizeMaxPlayers(session.room.maxPlayers)
+  const perTeam = seatsPerTeam(maxPlayers)
+  if (session.room.players.length < maxPlayers) {
+    throw new Error(`Need ${maxPlayers} players to start.`)
+  }
   if (!session.room.players.every((p) => p.isReady)) throw new Error('All players must be ready.')
-  if (session.room.players.filter((p) => p.teamId === 'team-a').length !== 2) {
-    throw new Error('Each team needs exactly 2 players.')
+  const teamA = session.room.players.filter((p) => p.teamId === 'team-a').length
+  const teamB = session.room.players.filter((p) => p.teamId === 'team-b').length
+  if (teamA !== perTeam || teamB !== perTeam) {
+    throw new Error(
+      maxPlayers === 2
+        ? 'Need one player on each team (1v1).'
+        : 'Each team needs exactly 2 players.',
+    )
   }
   const room = rebuildTeamPlayerIds({
     ...session.room,
@@ -683,6 +717,10 @@ function auto_end_turn(params: { roomId: string; playerId: string }): {
 } {
   const session = requireSession(params.roomId)
   if (!session.game) throw new Error('Game not started.')
+  // No-timer rooms never auto-skip a turn.
+  if (session.room.turnTimerSeconds === 0) {
+    return { room: session.room, game: session.game }
+  }
   const game = session.game
   if (game.turn.activePlayerId !== params.playerId) throw new Error('Not your turn.')
   const hand = game.hands[params.playerId] ?? []
@@ -820,6 +858,7 @@ const METHODS: Record<string, (params: any) => unknown> = {
   set_seat,
   set_ready,
   set_timer,
+  set_max_players,
   set_target,
   start_game,
   draw,

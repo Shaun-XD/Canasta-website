@@ -1,15 +1,43 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import { PlayerAvatar } from '../components/PlayerAvatar'
-import type { TeamId } from '../types/game'
+import type { MaxPlayers, TeamId } from '../types/game'
+import { DEFAULT_TURN_TIMER_SECONDS, normalizeMaxPlayers, seatsPerTeam } from '../types/game'
 
 export function Lobby() {
   const { roomId } = useParams()
   const navigate = useNavigate()
   const room = useGameStore((s) => s.room)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
-  const { toggleReady, setLocalTeam, startGame, setTurnTimerSeconds, exitToHome } = useGameStore((s) => s.actions)
+  const playMode = useGameStore((s) => s.playMode)
+  const lastActionError = useGameStore((s) => s.lastActionError)
+  const {
+    toggleReady,
+    setLocalTeam,
+    startGame,
+    setTurnTimerSeconds,
+    setMaxPlayers,
+    exitToHome,
+    rejoinOnlineSession,
+  } = useGameStore((s) => s.actions)
+
+  const [sessionCheck, setSessionCheck] = useState<'pending' | 'done'>('pending')
+
+  // After refresh / mobile sleep, Zustand is empty but localStorage still has
+  // roomId+playerId — rejoin so Ready/Start work again (CLIENTS rebind).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      await rejoinOnlineSession()
+      if (!cancelled) setSessionCheck('done')
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Intentionally once per lobby room visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId])
 
   useEffect(() => {
     if (room?.status === 'in-progress' && room.roomId === roomId) {
@@ -17,15 +45,30 @@ export function Lobby() {
     }
   }, [room?.status, room?.roomId, roomId, navigate])
 
+  if (sessionCheck === 'pending') {
+    return (
+      <div className="felt-bg flex min-h-screen items-center justify-center text-white/70">
+        Reconnecting to lobby…
+      </div>
+    )
+  }
+
   if (!room || room.roomId !== roomId) {
     return <Navigate to="/" replace />
   }
 
-  const playMode = useGameStore((s) => s.playMode)
+  const capacity = normalizeMaxPlayers(room.maxPlayers)
+  const perTeam = seatsPerTeam(capacity)
   const localPlayer = room.players.find((p) => p.id === localPlayerId)
-  const allReady = room.players.length >= 4 && room.players.every((p) => p.isReady)
+  const teamACount = room.players.filter((p) => p.teamId === 'team-a').length
+  const teamBCount = room.players.filter((p) => p.teamId === 'team-b').length
+  const teamsBalanced = teamACount === perTeam && teamBCount === perTeam
+  const allReady = room.players.length >= capacity && room.players.every((p) => p.isReady)
+  const canStart = allReady && teamsBalanced
   const isHost = localPlayer?.id === room.hostPlayerId
   const humans = room.players.filter((p) => !p.isMock).length
+  const noTimer = room.turnTimerSeconds === 0
+  const readyCount = room.players.filter((p) => p.isReady).length
 
   function playersOnTeam(teamId: TeamId) {
     return room!.players.filter((p) => p.teamId === teamId).sort((a, b) => a.seat - b.seat)
@@ -34,6 +77,10 @@ export function Lobby() {
   function handleExit() {
     exitToHome()
     navigate('/', { replace: true })
+  }
+
+  function handleMaxPlayers(next: MaxPlayers) {
+    setMaxPlayers(next)
   }
 
   return (
@@ -60,22 +107,73 @@ export function Lobby() {
             Match target score: <span className="text-white/80">{room.matchTargetScore}</span>
           </span>
 
-          <div className="mt-2 flex items-center gap-2 text-xs font-medium text-white/50">
-            <span>Turn timer:</span>
-            {localPlayer?.id === room.hostPlayerId ? (
-              <input
-                type="number"
-                min={10}
-                step={5}
-                value={room.turnTimerSeconds}
-                onChange={(e) => setTurnTimerSeconds(Number(e.target.value))}
-                className="w-20 rounded-md border border-white/15 bg-white/10 px-2 py-1 text-center text-white outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300"
-              />
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-white/50">
+            <span>Players:</span>
+            {isHost ? (
+              <div className="flex rounded-md bg-white/5 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => handleMaxPlayers(2)}
+                  className={`rounded px-2.5 py-1 text-[11px] font-semibold transition ${
+                    capacity === 2
+                      ? 'bg-yellow-400 text-emerald-950'
+                      : 'text-white/70 hover:text-white'
+                  }`}
+                >
+                  2 (1v1)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMaxPlayers(4)}
+                  className={`rounded px-2.5 py-1 text-[11px] font-semibold transition ${
+                    capacity === 4
+                      ? 'bg-yellow-400 text-emerald-950'
+                      : 'text-white/70 hover:text-white'
+                  }`}
+                >
+                  4 (2v2)
+                </button>
+              </div>
             ) : (
-              <span className="text-white/80">{room.turnTimerSeconds}</span>
+              <span className="text-white/80">
+                {capacity === 2 ? '2-player (1v1)' : '4-player (2v2)'}
+              </span>
             )}
-            <span>seconds per turn</span>
           </div>
+
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-white/50">
+            <span>Turn timer:</span>
+            {isHost ? (
+              <>
+                <input
+                  type="number"
+                  min={10}
+                  step={5}
+                  disabled={noTimer}
+                  value={noTimer ? DEFAULT_TURN_TIMER_SECONDS : room.turnTimerSeconds}
+                  onChange={(e) => setTurnTimerSeconds(Number(e.target.value))}
+                  className="w-20 rounded-md border border-white/15 bg-white/10 px-2 py-1 text-center text-white outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300 disabled:opacity-40"
+                />
+                <span>seconds</span>
+                <button
+                  type="button"
+                  onClick={() => setTurnTimerSeconds(noTimer ? DEFAULT_TURN_TIMER_SECONDS : 0)}
+                  className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition ${
+                    noTimer
+                      ? 'border-yellow-300/60 bg-yellow-400/20 text-yellow-200'
+                      : 'border-white/20 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                >
+                  No timer
+                </button>
+              </>
+            ) : (
+              <span className="text-white/80">{noTimer ? 'Off (no timer)' : `${room.turnTimerSeconds}s per turn`}</span>
+            )}
+          </div>
+          {noTimer && (
+            <p className="text-[11px] text-white/40">No countdown — turns never auto-skip.</p>
+          )}
         </div>
 
         <div className="grid gap-5 sm:grid-cols-2">
@@ -105,6 +203,9 @@ export function Lobby() {
                     <div className="flex-1">
                       <p className="text-sm font-semibold">
                         {p.name} {p.isLocal && <span className="text-yellow-300">(you)</span>}
+                        {p.id === room.hostPlayerId && (
+                          <span className="ml-1 text-[10px] font-medium text-white/40">host</span>
+                        )}
                       </p>
                       <p className="text-[11px] text-white/50">Seat {p.seat + 1}</p>
                     </div>
@@ -125,6 +226,20 @@ export function Lobby() {
           ))}
         </div>
 
+        {!teamsBalanced && room.players.length >= capacity && (
+          <p className="mt-4 text-center text-sm text-amber-200/90">
+            {capacity === 2
+              ? `Need one player on each team (currently ${teamACount}–${teamBCount}). Use “Switch here”.`
+              : `Teams must be 2v2 to start (currently ${teamACount}–${teamBCount}). Use “Switch here”.`}
+          </p>
+        )}
+
+        {lastActionError && (
+          <p className="mt-4 rounded-lg border border-red-400/30 bg-red-500/15 px-3 py-2 text-center text-sm text-red-200">
+            {lastActionError}
+          </p>
+        )}
+
         <div className="mt-8 flex flex-col items-center gap-3">
           <button
             type="button"
@@ -140,18 +255,31 @@ export function Lobby() {
 
           <button
             type="button"
-            disabled={!allReady || (playMode === 'online' && !isHost)}
+            disabled={!canStart || (playMode === 'online' && !isHost)}
             onClick={startGame}
             className="w-full max-w-xs rounded-lg bg-emerald-500 px-4 py-2.5 font-semibold text-white shadow transition enabled:hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {playMode === 'online' && !isHost
               ? 'Waiting for host to start…'
-              : `Start Game ${allReady ? '' : `(${room.players.filter((p) => p.isReady).length}/4 ready)`}`}
+              : `Start Game ${canStart ? '' : `(${readyCount}/${capacity} ready)`}`}
           </button>
           {playMode === 'online' && (
             <p className="text-center text-xs text-white/45">
-              Online lobby · {humans}/4 humans joined · share code{' '}
+              Online lobby · {humans}/{capacity} humans joined ·{' '}
+              {capacity === 2 ? '1v1' : '2v2'} · share code{' '}
               <span className="font-semibold text-yellow-300/90">{room.roomId}</span>
+              {!isHost && localPlayer && (
+                <>
+                  {' '}
+                  · only the <span className="text-white/70">host</span> can press Start
+                </>
+              )}
+            </p>
+          )}
+          {playMode === 'solo' && (
+            <p className="text-center text-xs text-white/45">
+              Solo lobby · {capacity === 2 ? '1v1 vs bot' : '2v2 with bots'} ({room.players.length}/
+              {capacity} seats)
             </p>
           )}
         </div>

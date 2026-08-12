@@ -199,11 +199,28 @@ export interface RoomState {
    */
   matchTargetScore: number
   /**
+   * Lobby capacity: 2 (1v1) or 4 (2v2). Set at create / by host in lobby.
+   * Join rejects when the lobby is already at this size.
+   */
+  maxPlayers: 2 | 4
+  /**
    * Per-player turn timer, in seconds, configured by the host at
    * room-creation time (or adjusted in the lobby before the game starts).
    * Applies uniformly to every player's turn for the session.
+   * `0` means no timer (no countdown, no auto skip-turn).
    */
   turnTimerSeconds: number
+}
+
+export type MaxPlayers = 2 | 4
+
+export function normalizeMaxPlayers(value: number | undefined | null): MaxPlayers {
+  return value === 2 ? 2 : 4
+}
+
+/** Players per team for the given lobby size (1 for 1v1, 2 for 2v2). */
+export function seatsPerTeam(maxPlayers: MaxPlayers): number {
+  return maxPlayers === 2 ? 1 : 2
 }
 
 /** A pending "choose which edge the displaced wild slides to" UI prompt. */
@@ -309,3 +326,12 @@ export const RED_SUITS: Suit[] = ['hearts', 'diamonds']
 
 export const DEFAULT_TARGET_SCORE = 2100
 export const DEFAULT_TURN_TIMER_SECONDS = 60
+
+/** `0` = no timer; otherwise clamp to ≥10 seconds. */
+export function normalizeTurnTimerSeconds(seconds: number | undefined | null): number {
+  if (seconds === 0) return 0
+  if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 10) {
+    return Math.round(seconds)
+  }
+  return DEFAULT_TURN_TIMER_SECONDS
+}

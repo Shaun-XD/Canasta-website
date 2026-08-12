@@ -8,7 +8,7 @@ import type {
   Team,
   TeamId,
 } from '../types/game'
-import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS } from '../types/game'
+import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam, type MaxPlayers } from '../types/game'
 import { buildShuffledDeck, dealHands, sortHand } from '../lib/deck'
 import { initialPozzettoState, shouldClaimPozzettoOnDiscard, shouldClaimPozzettoOnMeldEmpty } from '../engine/pozzetto'
 import { evaluateShowEligibility } from '../engine/showEligibility'
@@ -56,6 +56,7 @@ import {
   socketReturnToLobby,
   socketRejoinRoom,
   socketSetReady,
+  socketSetMaxPlayers,
   socketSetTarget,
   socketSetTeam,
   socketSetTimer,
@@ -160,8 +161,8 @@ function makeRoomCode(): string {
 
 const AVATAR_COLORS = ['#ef4444', '#3b82f6', '#eab308', '#22c55e', '#a855f7', '#ec4899']
 
-function makeMockPlayers(): Player[] {
-  return MOCK_SEATS.map((seat, i) => ({
+function makeMockPlayers(botCount: number): Player[] {
+  return MOCK_SEATS.slice(0, Math.max(0, botCount)).map((seat, i) => ({
     id: randomId('mock'),
     name: seat.name,
     teamId: seat.teamId,
@@ -211,14 +212,20 @@ interface GameStoreState {
   selectedDiscardIds: string[]
   lastActionError: string | null
   actions: {
-    /** Solo demo with 3 bots (local-only, no server). */
-    createRoom: (playerName: string, targetScore?: number, turnTimerSeconds?: number) => string
+    /** Solo demo with bots (local-only, no server). */
+    createRoom: (
+      playerName: string,
+      targetScore?: number,
+      turnTimerSeconds?: number,
+      maxPlayers?: MaxPlayers,
+    ) => string
     joinRoom: (roomId: string, playerName: string) => void
     /** Online multiplayer via FastAPI Socket.IO backend. */
     createRoomOnline: (
       playerName: string,
       targetScore?: number,
       turnTimerSeconds?: number,
+      maxPlayers?: MaxPlayers,
     ) => Promise<string>
     joinRoomOnline: (roomId: string, playerName: string) => Promise<void>
     rejoinOnlineSession: () => Promise<boolean>
@@ -227,6 +234,8 @@ interface GameStoreState {
     toggleReady: () => void
     setMatchTargetScore: (score: number) => void
     setTurnTimerSeconds: (seconds: number) => void
+    /** Host: set lobby size to 2 (1v1) or 4 (2v2). */
+    setMaxPlayers: (maxPlayers: MaxPlayers) => void
     startGame: () => void
     toggleSelectCard: (cardId: string) => void
     clearSelection: () => void
@@ -283,7 +292,11 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
   onlineSyncBound = true
   bindSocketStoreHandlers({
     onRoomState: (room, playerId) => {
-      set({ room, localPlayerId: playerId, playMode: 'online' })
+      set({
+        room: { ...room, maxPlayers: normalizeMaxPlayers(room.maxPlayers) },
+        localPlayerId: playerId,
+        playMode: 'online',
+      })
     },
     onGameState: (game) => {
       const prev = get()
@@ -305,6 +318,10 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
       })
     },
     onActionError: (error) => set({ lastActionError: error }),
+    // After a socket reconnect the server loses CLIENTS[sid] — rebind via rejoin.
+    onReconnect: () => {
+      void get().actions.rejoinOnlineSession()
+    },
   })
 }
 
@@ -511,7 +528,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   lastActionError: null,
 
   actions: {
-    createRoom: (playerName: string, targetScore?: number, turnTimerSeconds?: number) => {
+    createRoom: (playerName, targetScore, turnTimerSeconds, maxPlayers) => {
+      const capacity = normalizeMaxPlayers(maxPlayers)
       const roomId = makeRoomCode()
       const localPlayer: Player = {
         id: randomId('local'),
@@ -524,7 +542,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         connectionStatus: 'connected',
         avatarColor: AVATAR_COLORS[0],
       }
-      const mockPlayers = makeMockPlayers()
+      const mockPlayers = makeMockPlayers(capacity - 1)
       const players = [localPlayer, ...mockPlayers]
 
       set({
@@ -536,7 +554,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           teams: makeTeams(players),
           hostPlayerId: localPlayer.id,
           matchTargetScore: targetScore ?? DEFAULT_TARGET_SCORE,
-          turnTimerSeconds: turnTimerSeconds && turnTimerSeconds > 0 ? Math.round(turnTimerSeconds) : DEFAULT_TURN_TIMER_SECONDS,
+          turnTimerSeconds: normalizeTurnTimerSeconds(turnTimerSeconds),
+          maxPlayers: capacity,
         },
         game: null,
         localPlayerId: localPlayer.id,
@@ -561,7 +580,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         connectionStatus: 'connected',
         avatarColor: AVATAR_COLORS[0],
       }
-      const mockPlayers = makeMockPlayers()
+      const mockPlayers = makeMockPlayers(3)
       const players = [localPlayer, ...mockPlayers]
 
       set({
@@ -574,6 +593,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           hostPlayerId: localPlayer.id,
           matchTargetScore: DEFAULT_TARGET_SCORE,
           turnTimerSeconds: DEFAULT_TURN_TIMER_SECONDS,
+          maxPlayers: 4,
         },
         game: null,
         localPlayerId: localPlayer.id,
@@ -584,12 +604,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       })
     },
 
-    createRoomOnline: async (playerName, targetScore, turnTimerSeconds) => {
+    createRoomOnline: async (playerName, targetScore, turnTimerSeconds, maxPlayers) => {
       ensureOnlineSync(set, get)
       const ack = await socketCreateRoom({
         playerName,
         targetScore,
         turnTimerSeconds,
+        maxPlayers: normalizeMaxPlayers(maxPlayers),
       })
       if (!ack.ok || !ack.roomId || !ack.playerId || !ack.room) {
         throw new Error(ack.error || 'Could not create room.')
@@ -597,7 +618,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       persistOnlineSession(ack.roomId, ack.playerId)
       set({
         playMode: 'online',
-        room: ack.room,
+        room: { ...ack.room, maxPlayers: normalizeMaxPlayers(ack.room.maxPlayers) },
         game: null,
         localPlayerId: ack.playerId,
         selectedCardIds: [],
@@ -618,7 +639,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       persistOnlineSession(ack.roomId, ack.playerId)
       set({
         playMode: 'online',
-        room: ack.room,
+        room: { ...ack.room, maxPlayers: normalizeMaxPlayers(ack.room.maxPlayers) },
         game: ack.game ?? null,
         localPlayerId: ack.playerId,
         selectedCardIds: [],
@@ -658,8 +679,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         socketSetTeam(teamId)
         return
       }
+      const perTeam = seatsPerTeam(normalizeMaxPlayers(room.maxPlayers))
+      const count = room.players.filter((p) => p.teamId === teamId && p.id !== localPlayerId).length
+      if (count >= perTeam) {
+        set({ lastActionError: 'That team is full.' })
+        return
+      }
       const players = room.players.map((p) => (p.id === localPlayerId ? { ...p, teamId } : p))
-      set({ room: { ...room, players, teams: makeTeams(players) } })
+      set({ room: { ...room, players, teams: makeTeams(players) }, lastActionError: null })
     },
 
     setLocalSeat: (seat: number) => {
@@ -683,12 +710,39 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
     toggleReady: () => {
       const { room, localPlayerId, playMode } = get()
-      if (!room || !localPlayerId) return
-      if (playMode === 'online') {
-        socketSetReady()
+      if (!room || !localPlayerId) {
+        set({ lastActionError: 'Not connected to a room — rejoin with the party code.' })
         return
       }
-      const players = room.players.map((p) => (p.id === localPlayerId ? { ...p, isReady: !p.isReady } : p))
+      const local = room.players.find((p) => p.id === localPlayerId)
+      const nextReady = !(local?.isReady ?? false)
+      if (playMode === 'online') {
+        // Explicit boolean (not toggle) avoids double-click / duplicate-emit races.
+        void (async () => {
+          // Optimistic UI so mobile taps feel responsive while waiting for broadcast.
+          set({
+            room: {
+              ...room,
+              players: room.players.map((p) =>
+                p.id === localPlayerId ? { ...p, isReady: nextReady } : p,
+              ),
+            },
+            lastActionError: null,
+          })
+          let ack = await socketSetReady(nextReady)
+          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+            const rejoined = await get().actions.rejoinOnlineSession()
+            if (rejoined) ack = await socketSetReady(nextReady)
+          }
+          if (!ack.ok) {
+            set({ lastActionError: ack.error || 'Could not update ready status.' })
+          }
+        })()
+        return
+      }
+      const players = room.players.map((p) =>
+        p.id === localPlayerId ? { ...p, isReady: nextReady } : p,
+      )
       set({ room: { ...room, players } })
     },
 
@@ -705,21 +759,99 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     setTurnTimerSeconds: (seconds: number) => {
       const { room, playMode } = get()
       if (!room) return
+      const next = normalizeTurnTimerSeconds(seconds === 0 ? 0 : seconds)
       if (playMode === 'online') {
-        socketSetTimer(Math.max(10, Math.round(seconds)))
+        void (async () => {
+          const ack = await socketSetTimer(next)
+          if (!ack.ok) set({ lastActionError: ack.error || 'Could not update timer.' })
+        })()
+        // Optimistic so the host UI updates immediately.
+        set({ room: { ...room, turnTimerSeconds: next }, lastActionError: null })
         return
       }
-      set({ room: { ...room, turnTimerSeconds: Math.max(10, Math.round(seconds)) } })
+      set({ room: { ...room, turnTimerSeconds: next } })
+    },
+
+    setMaxPlayers: (maxPlayers: MaxPlayers) => {
+      const { room, playMode, localPlayerId } = get()
+      if (!room || room.status !== 'lobby') return
+      if (localPlayerId !== room.hostPlayerId) {
+        set({ lastActionError: 'Only the host can change the player count.' })
+        return
+      }
+      const capacity = normalizeMaxPlayers(maxPlayers)
+      if (room.players.filter((p) => !p.isMock).length > capacity) {
+        set({
+          lastActionError: `Cannot set ${capacity}-player lobby — ${room.players.filter((p) => !p.isMock).length} humans already joined.`,
+        })
+        return
+      }
+      if (playMode === 'online') {
+        const previous = normalizeMaxPlayers(room.maxPlayers)
+        void (async () => {
+          const ack = await socketSetMaxPlayers(capacity)
+          if (!ack.ok) {
+            const current = get().room
+            if (current) {
+              set({
+                room: { ...current, maxPlayers: previous },
+                lastActionError: ack.error || 'Could not update player count.',
+              })
+            }
+          }
+        })()
+        set({ room: { ...room, maxPlayers: capacity }, lastActionError: null })
+        return
+      }
+      // Solo: rebuild bots to fill the selected capacity.
+      const humans = room.players.filter((p) => !p.isMock)
+      const bots = makeMockPlayers(capacity - humans.length)
+      const players = [...humans, ...bots]
+      set({
+        room: {
+          ...room,
+          maxPlayers: capacity,
+          players,
+          teams: makeTeams(players),
+        },
+        lastActionError: null,
+      })
     },
 
     startGame: () => {
       const { room, playMode } = get()
       if (!room) return
       if (playMode === 'online') {
-        socketStartGame()
+        void (async () => {
+          set({ lastActionError: null })
+          let ack = await socketStartGame()
+          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+            const rejoined = await get().actions.rejoinOnlineSession()
+            if (rejoined) ack = await socketStartGame()
+          }
+          if (!ack.ok) {
+            set({
+              lastActionError:
+                ack.error ||
+                'Could not start the game. Only the host can start once the lobby is full and ready.',
+            })
+            return
+          }
+        })()
         return
       }
-      if (room.players.length < 4 || !room.players.every((p) => p.isReady)) return
+      const capacity = normalizeMaxPlayers(room.maxPlayers)
+      const perTeam = capacity / 2
+      const teamA = room.players.filter((p) => p.teamId === 'team-a').length
+      const teamB = room.players.filter((p) => p.teamId === 'team-b').length
+      if (
+        room.players.length < capacity ||
+        !room.players.every((p) => p.isReady) ||
+        teamA !== perTeam ||
+        teamB !== perTeam
+      ) {
+        return
+      }
 
       botTurnGeneration += 1
       const game = dealNewRound(room)

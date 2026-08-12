@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import { Card } from '../components/Card'
-import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS } from '../types/game'
+import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, type MaxPlayers } from '../types/game'
 import { getSocketUrl } from '../lib/socket'
 
 export function Landing() {
@@ -20,6 +20,8 @@ export function Landing() {
   const [busy, setBusy] = useState(false)
   const [targetScore, setTargetScore] = useState(String(DEFAULT_TARGET_SCORE))
   const [turnTimerSeconds, setTurnTimerSeconds] = useState(String(DEFAULT_TURN_TIMER_SECONDS))
+  const [noTimer, setNoTimer] = useState(false)
+  const [maxPlayers, setMaxPlayers] = useState<MaxPlayers>(4)
 
   async function handleCreate() {
     if (!name.trim()) {
@@ -30,11 +32,14 @@ export function Landing() {
     const parsedTimer = Number(turnTimerSeconds)
     const target =
       Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : DEFAULT_TARGET_SCORE
-    const timer =
-      Number.isFinite(parsedTimer) && parsedTimer >= 10 ? parsedTimer : DEFAULT_TURN_TIMER_SECONDS
+    const timer = noTimer
+      ? 0
+      : Number.isFinite(parsedTimer) && parsedTimer >= 10
+        ? parsedTimer
+        : DEFAULT_TURN_TIMER_SECONDS
 
     if (playMode === 'solo') {
-      const roomId = createRoom(name.trim(), target, timer)
+      const roomId = createRoom(name.trim(), target, timer, maxPlayers)
       navigate(`/lobby/${roomId}`)
       return
     }
@@ -42,7 +47,7 @@ export function Landing() {
     setBusy(true)
     setError('')
     try {
-      const roomId = await createRoomOnline(name.trim(), target, timer)
+      const roomId = await createRoomOnline(name.trim(), target, timer, maxPlayers)
       navigate(`/lobby/${roomId}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not reach the game server.')
@@ -90,7 +95,7 @@ export function Landing() {
           <h1 className="text-5xl font-black tracking-tight text-white drop-shadow">
             Canasta
           </h1>
-          <p className="text-sm font-medium text-white/60">Online multiplayer · 2 vs 2</p>
+          <p className="text-sm font-medium text-white/60">Online multiplayer · 1v1 or 2v2</p>
         </div>
       </div>
 
@@ -171,17 +176,68 @@ export function Landing() {
             <label className="mb-1 mt-4 block text-xs font-semibold uppercase tracking-wide text-white/60">
               Turn timer (seconds)
             </label>
-            <input
-              type="number"
-              min={10}
-              step={5}
-              value={turnTimerSeconds}
-              onChange={(e) => setTurnTimerSeconds(e.target.value)}
-              className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-white placeholder-white/40 outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300"
-            />
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min={10}
+                step={5}
+                disabled={noTimer}
+                value={turnTimerSeconds}
+                onChange={(e) => {
+                  setTurnTimerSeconds(e.target.value)
+                  setNoTimer(false)
+                }}
+                className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-white placeholder-white/40 outline-none focus:border-yellow-300 focus:ring-1 focus:ring-yellow-300 disabled:opacity-40"
+              />
+              <button
+                type="button"
+                onClick={() => setNoTimer((v) => !v)}
+                className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                  noTimer
+                    ? 'border-yellow-300/60 bg-yellow-400/20 text-yellow-200'
+                    : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
+                }`}
+              >
+                No timer
+              </button>
+            </div>
             <p className="mt-1 text-[11px] text-white/40">
-              Default {DEFAULT_TURN_TIMER_SECONDS}s. Applies to every player; a turn auto-ends if it
-              runs out.
+              {noTimer
+                ? 'No countdown — players are never auto-skipped for time.'
+                : `Default ${DEFAULT_TURN_TIMER_SECONDS}s. A turn auto-ends if it runs out.`}
+            </p>
+
+            <label className="mb-1 mt-4 block text-xs font-semibold uppercase tracking-wide text-white/60">
+              Players
+            </label>
+            <div className="flex rounded-lg bg-white/5 p-1">
+              <button
+                type="button"
+                onClick={() => setMaxPlayers(2)}
+                className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
+                  maxPlayers === 2 ? 'bg-yellow-400 text-emerald-950' : 'text-white/70 hover:text-white'
+                }`}
+              >
+                2 players (1v1)
+              </button>
+              <button
+                type="button"
+                onClick={() => setMaxPlayers(4)}
+                className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
+                  maxPlayers === 4 ? 'bg-yellow-400 text-emerald-950' : 'text-white/70 hover:text-white'
+                }`}
+              >
+                4 players (2v2)
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-white/40">
+              {maxPlayers === 2
+                ? playMode === 'solo'
+                  ? 'You vs one bot.'
+                  : 'Lobby holds 2 people — extra joiners are blocked when full.'
+                : playMode === 'solo'
+                  ? 'You plus three bots (classic 2v2).'
+                  : 'Lobby holds 4 people — a 5th joiner is blocked when full.'}
             </p>
           </div>
         )}
@@ -218,8 +274,8 @@ export function Landing() {
       </div>
 
       <p className="mt-8 max-w-md text-center text-xs text-white/40">
-        Online mode syncs four real devices through the FastAPI backend. Solo fills empty seats with
-        bots for local practice.
+        Online mode syncs 2 or 4 devices through the FastAPI backend. Solo fills empty seats with bots
+        for local practice.
       </p>
     </div>
   )

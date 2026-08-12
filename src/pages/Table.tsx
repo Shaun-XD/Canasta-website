@@ -62,7 +62,13 @@ export function Table() {
     startNewGame,
     returnToLobby,
     exitToHome,
+    rejoinOnlineSession,
   } = useGameStore((s) => s.actions)
+
+  // Restore socket→player binding after refresh / reconnect.
+  useEffect(() => {
+    void rejoinOnlineSession()
+  }, [roomId, rejoinOnlineSession])
 
   // Item 3: the stock pile is rendered as one generic face-down card (not a
   // per-card element), so a freshly-drawn card has no prior on-screen rect
@@ -122,6 +128,7 @@ export function Table() {
   }, [])
 
   // Classic table seats: teammate North, opponents West/East (clockwise from local).
+  // 1v1: sole opponent sits North (no teammate / side seats).
   const seating = useMemo(() => {
     if (!room || !localPlayerId) return null
     const localPlayer = room.players.find((p) => p.id === localPlayerId)
@@ -130,6 +137,14 @@ export function Table() {
     const localIndex = sorted.findIndex((p) => p.id === localPlayerId)
     const restClockwise =
       localIndex >= 0 ? [...sorted.slice(localIndex + 1), ...sorted.slice(0, localIndex)] : sorted.filter((p) => p.id !== localPlayerId)
+
+    if (room.players.length === 2) {
+      return {
+        south: localPlayer,
+        north: restClockwise[0],
+      } as { south: Player; north?: Player; west?: Player; east?: Player }
+    }
+
     const teammate = restClockwise.find((p) => p.teamId === localPlayer.teamId)
     const opponents = restClockwise.filter((p) => p.id !== teammate?.id)
     return {
@@ -141,7 +156,10 @@ export function Table() {
   }, [room, localPlayerId])
 
   // Item 2: per-player turn countdown, driven off the current turn's start time.
-  const turnDeadline = game && room ? game.turn.startedAt + room.turnTimerSeconds * 1000 : null
+  // turnTimerSeconds === 0 means no timer (no countdown / no auto skip).
+  const timerEnabled = !!room && room.turnTimerSeconds > 0
+  const turnDeadline =
+    timerEnabled && game ? game.turn.startedAt + room.turnTimerSeconds * 1000 : null
   const isPaused = game?.turn.isPaused ?? false
   const remainingSeconds = useCountdown(turnDeadline, isPaused)
   const firedAutoEndForTurnRef = useRef<number | null>(null)
@@ -149,12 +167,13 @@ export function Table() {
   const isLocalTurn = !!game && game.turn.activePlayerId === localPlayerId
 
   useEffect(() => {
+    if (!timerEnabled) return
     if (!game || !isLocalTurn || remainingSeconds == null || isPaused) return
     if (remainingSeconds > 0) return
     if (firedAutoEndForTurnRef.current === game.turn.turnNumber) return
     firedAutoEndForTurnRef.current = game.turn.turnNumber
     autoEndTurn()
-  }, [remainingSeconds, isLocalTurn, isPaused, game, autoEndTurn])
+  }, [timerEnabled, remainingSeconds, isLocalTurn, isPaused, game, autoEndTurn])
 
   function handleDrawFromStock() {
     const stockRect = stockRef.current?.getBoundingClientRect()
@@ -289,23 +308,26 @@ export function Table() {
             Room <span className="font-mono text-yellow-300">{room.roomId}</span>
           </p>
           <p className="mt-0.5 truncate text-[11px] text-white/45 sm:hidden">
-            R{game.round} · {room.matchTargetScore} pts · {room.turnTimerSeconds}s
+            R{game.round} · {room.matchTargetScore} pts · {timerEnabled ? `${room.turnTimerSeconds}s` : 'no timer'}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           <span className="hidden rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-white/55 ring-1 ring-white/10 sm:inline">
-            Round {game.round} · Target {room.matchTargetScore} · {room.turnTimerSeconds}s
+            Round {game.round} · Target {room.matchTargetScore} ·{' '}
+            {timerEnabled ? `${room.turnTimerSeconds}s` : 'No timer'}
           </span>
-          <button
-            type="button"
-            onClick={togglePauseTimer}
-            className={`action-btn action-btn-ghost !min-h-9 !min-w-0 !px-3 !py-1.5 !text-[11px] ${
-              isPaused ? '!bg-yellow-400 !text-emerald-950' : ''
-            }`}
-            title={isPaused ? 'Resume the turn timer for everyone' : 'Pause the turn timer for everyone'}
-          >
-            {isPaused ? 'Resume' : 'Pause'}
-          </button>
+          {timerEnabled && (
+            <button
+              type="button"
+              onClick={togglePauseTimer}
+              className={`action-btn action-btn-ghost !min-h-9 !min-w-0 !px-3 !py-1.5 !text-[11px] ${
+                isPaused ? '!bg-yellow-400 !text-emerald-950' : ''
+              }`}
+              title={isPaused ? 'Resume the turn timer for everyone' : 'Pause the turn timer for everyone'}
+            >
+              {isPaused ? 'Resume' : 'Pause'}
+            </button>
+          )}
           <button
             type="button"
             onClick={exitToHome}

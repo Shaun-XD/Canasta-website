@@ -71,9 +71,17 @@ npm run dev
 
 ### Deploy
 
-- **Frontend:** Vercel (static Vite build). Set `VITE_SOCKET_URL` to your API host.
-- **Backend:** Railway / Render / Fly (long-running process — Vercel cannot host WebSockets).
-  Details in `server/README.md`.
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the full branch workflow:
+
+| Branch | Frontend | Backend |
+| --- | --- | --- |
+| `main` | Vercel **Production** | Railway production API |
+| `develop` / `feature/*` | Vercel **Preview** | Railway staging API (or shared API) |
+
+- **Frontend:** Vercel (static Vite build). Set `VITE_SOCKET_URL` to your Railway HTTPS URL (Production + Preview).
+- **Backend:** Railway (Dockerfile) — Vercel cannot host WebSockets. Details in `server/README.md`.
+
+Preview/production UIs cannot use `localhost:4000`; the browser would call the *visitor’s* machine, not yours.
 
 To type-check and build for production:
 

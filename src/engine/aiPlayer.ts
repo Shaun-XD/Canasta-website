@@ -438,7 +438,7 @@ export function classifyRemainderVitality(card: CardModel, melds: Meld[]): {
     const finishesCanasta = len >= 6 && len < 7
 
     let cardTier: VitalTier = 'useful'
-    let cardScore = AI_WEIGHTS.vitalUseful
+    let cardScore: number = AI_WEIGHTS.vitalUseful
 
     if (finishesCanasta) {
       cardTier = 'critical'
@@ -988,7 +988,11 @@ export function planAiDraw(
     if (!bestRef.current || plan.score > bestRef.current.score) bestRef.current = plan
   }
 
-  const tryPlan = (partial: Omit<AiDrawPlan, 'score'> & {
+  const tryPlan = (partial: {
+    handCardIds: string[]
+    selectedDiscardIds: string[]
+    targetMeldId: string | null
+    kind: 'set' | 'sequence' | 'append'
     meldCards: CardModel[]
     remainderPile: CardModel[]
     targetMeld?: Meld | null

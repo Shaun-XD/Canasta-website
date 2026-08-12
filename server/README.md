@@ -48,25 +48,33 @@ Open the site on two devices/browsers → **Online** → create/join the same ro
 
 ## Deploy (Railway + Vercel)
 
+Full branch workflow (`main` → prod, `develop` / features → preview):
+**[docs/DEPLOY.md](../docs/DEPLOY.md)**.
+
 The bridge imports `src/engine`, so the **whole repo** must be on the API host
-(not `server/` alone). A root `Dockerfile` handles Python + Node.
+(not `server/` alone). A root `Dockerfile` + `railway.toml` handle Python + Node.
 
 ### Railway (API)
 
 1. [railway.app](https://railway.app) → New Project → Deploy from GitHub → this repo.
-2. Settings → use the root `Dockerfile` (Railway usually auto-detects it).
-3. Variables:
-   - `FRONTEND_ORIGINS=https://YOUR-VERCEL-DOMAIN` (set after Vercel exists; `*` works for a first smoke test)
+2. Uses root `Dockerfile` / `railway.toml`.
+3. Variables (optional — defaults allow all `*.vercel.app` previews):
+   - `FRONTEND_ORIGINS=*` **or** exact prod URL(s)
+   - `FRONTEND_ORIGIN_REGEX` (default matches `*.vercel.app` + localhost)
 4. Generate a public domain (Settings → Networking → Generate Domain).
-5. Confirm `https://YOUR-RAILWAY-DOMAIN/health` returns `{"ok":true,...}`.
+5. Confirm `https://YOUR-RAILWAY-DOMAIN/health` returns `"ok": true`.
+
+Recommended: one Railway service tracking `main` (prod) and one tracking
+`develop` (staging for all Vercel previews).
 
 ### Vercel (UI)
 
 1. [vercel.com](https://vercel.com) → Import `Shaun-XD/Canasta-website`.
-2. Framework: Vite. Build `npm run build`, output `dist`.
-3. Environment variable (Production + Preview):
-   - `VITE_SOCKET_URL=https://YOUR-RAILWAY-DOMAIN` (no trailing slash)
-4. Deploy. Open the Vercel URL → **Online** → create a room.
+2. Production Branch = `main` (other branches get Preview URLs automatically).
+3. Environment variable `VITE_SOCKET_URL` (no trailing slash):
+   - **Production** → Railway prod domain
+   - **Preview** → Railway staging domain (or the same prod URL if you only have one)
+4. Deploy. Open the Vercel URL → Online → Landing should show your Railway URL, not localhost.
 
 ## Health
 

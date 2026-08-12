@@ -8,6 +8,7 @@ sockets/rooms and delegates mutations to `game_bridge/bridge.ts`.
 from __future__ import annotations
 
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -17,12 +18,39 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from bridge import bridge
 
-FRONTEND_ORIGINS = os.environ.get("FRONTEND_ORIGINS", "*")
-origins = ["*"] if FRONTEND_ORIGINS.strip() == "*" else [o.strip() for o in FRONTEND_ORIGINS.split(",") if o.strip()]
+# Comma-separated exact origins, or "*" to allow any.
+# Preview Vercel URLs change per branch — also match FRONTEND_ORIGIN_REGEX.
+FRONTEND_ORIGINS = os.environ.get("FRONTEND_ORIGINS", "*").strip()
+# Default allows every *.vercel.app preview/production alias + local Vite.
+FRONTEND_ORIGIN_REGEX = os.environ.get(
+    "FRONTEND_ORIGIN_REGEX",
+    r"https://([a-z0-9-]+\.)*vercel\.app|http://(localhost|127\.0\.0\.1):\d+",
+).strip()
+
+_explicit_origins = (
+    ["*"]
+    if FRONTEND_ORIGINS == "*"
+    else [o.strip() for o in FRONTEND_ORIGINS.split(",") if o.strip()]
+)
+_origin_re = re.compile(FRONTEND_ORIGIN_REGEX) if FRONTEND_ORIGIN_REGEX else None
+
+
+def _origin_allowed(origin: str | None, _environ: Any = None) -> bool:
+    if not origin:
+        return True
+    if "*" in _explicit_origins:
+        return True
+    if origin in _explicit_origins:
+        return True
+    if _origin_re is not None and _origin_re.fullmatch(origin):
+        return True
+    return False
+
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=origins if origins != ["*"] else "*",
+    cors_allowed_origins=_origin_allowed,
+    cors_credentials=False,
     logger=False,
     engineio_logger=False,
 )
@@ -38,8 +66,9 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Canasta realtime", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"] if "*" in _explicit_origins else _explicit_origins,
+    allow_origin_regex=FRONTEND_ORIGIN_REGEX or None,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -107,7 +136,22 @@ async def emit_error(sid: str, message: str) -> None:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "service": "canasta-realtime"}
+    """Liveness + deploy identity (Railway / Render inject these env vars)."""
+    return {
+        "ok": True,
+        "service": "canasta-realtime",
+        "gitCommit": os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+        or os.environ.get("RENDER_GIT_COMMIT")
+        or os.environ.get("GIT_COMMIT")
+        or None,
+        "gitBranch": os.environ.get("RAILWAY_GIT_BRANCH")
+        or os.environ.get("RENDER_GIT_BRANCH")
+        or os.environ.get("GIT_BRANCH")
+        or None,
+        "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME")
+        or os.environ.get("APP_ENV")
+        or None,
+    }
 
 
 @sio.event
@@ -145,6 +189,7 @@ async def room_create(sid, data):
                 "playerName": data.get("playerName") or "Player",
                 "targetScore": data.get("targetScore"),
                 "turnTimerSeconds": data.get("turnTimerSeconds"),
+                "maxPlayers": data.get("maxPlayers"),
             },
         )
         await _bind_client(sid, result["roomId"], result["playerId"])
@@ -226,6 +271,11 @@ async def room_set_ready(sid, data):
 @sio.on("room:setTimer")
 async def room_set_timer(sid, data):
     return await _player_action(sid, "set_timer", {"seconds": (data or {}).get("seconds", 120)})
+
+
+@sio.on("room:setMaxPlayers")
+async def room_set_max_players(sid, data):
+    return await _player_action(sid, "set_max_players", {"maxPlayers": (data or {}).get("maxPlayers", 4)})
 
 
 @sio.on("room:setTarget")
