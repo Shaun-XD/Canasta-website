@@ -399,7 +399,7 @@ export function Table() {
           </div>
 
           <section className="melds-grid min-h-0 w-full flex-1" aria-label="Team melds">
-            {[leftTeam, rightTeam].filter(Boolean).map((team, index) => {
+            {([leftTeam, rightTeam].filter((t): t is Team => t != null)).map((team, index) => {
               const isLocalSide = team.id === localTeam?.id
               const isRed = team.id === 'team-a'
               return (
