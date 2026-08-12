@@ -34,6 +34,7 @@ export function getSocket(): Socket {
       reconnection: true,
       reconnectionAttempts: 12,
       reconnectionDelay: 800,
+      timeout: 20000,
     })
   }
   return socket
@@ -84,27 +85,39 @@ function waitUntilConnected(s: Socket, ms: number): Promise<boolean> {
 function emitAck(event: string, payload?: unknown): Promise<RoomAck> {
   const s = connectSocket()
   return new Promise((resolve) => {
-    const fail = (error: string) => resolve({ ok: false, error })
+    let settled = false
+    const finish = (ack: RoomAck) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      resolve(ack)
+    }
+    const timer = window.setTimeout(() => {
+      finish({
+        ok: false,
+        error: `The server did not respond (${getSocketUrl()}). It may be restarting — wait a few seconds and try again.`,
+      })
+    }, 12000)
+
     void (async () => {
       const connected = await waitUntilConnected(s, 4000)
       if (!connected) {
-        fail('Lost connection to the server. Reconnecting — try again in a moment.')
+        finish({
+          ok: false,
+          error: `Lost connection to ${getSocketUrl()}. Reconnecting — try again in a moment.`,
+        })
         s.connect()
         return
       }
-      const timer = window.setTimeout(
-        () => fail('The server did not respond in time. It may be restarting — wait a few seconds and try again.'),
-        15000,
-      )
       try {
-        s.timeout(12000).emit(event, payload ?? {}, (err: Error | null, res: RoomAck) => {
-          window.clearTimeout(timer)
-          if (err) fail(friendlyAckError(err))
-          else resolve(res ?? { ok: false, error: 'Empty server response.' })
+        // Do not use socket.timeout().emit — python-socketio acks are not
+        // always recognized by that API, which surfaces as
+        // "operation has timed out" even when the engine already ran.
+        s.emit(event, payload ?? {}, (res: RoomAck) => {
+          finish(res ?? { ok: false, error: 'Empty server response.' })
         })
       } catch (err) {
-        window.clearTimeout(timer)
-        fail(friendlyAckError(err))
+        finish({ ok: false, error: friendlyAckError(err) })
       }
     })()
   })

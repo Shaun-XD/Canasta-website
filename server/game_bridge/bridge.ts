@@ -525,6 +525,9 @@ function attempt_meld(params: {
   selectedDiscardIds?: string[]
   slideEdge?: 'top' | 'bottom'
 }): { room: RoomState; game: GameState; error?: string } {
+  process.stderr.write(
+    `[bridge] attempt_meld player=${params.playerId} n=${(params.handCardIds ?? []).length}\n`,
+  )
   const session = requireSession(params.roomId)
   if (!session.game) throw new Error('Game not started.')
   let room = session.room

@@ -108,10 +108,16 @@ class GameBridge:
             await self._proc.stdin.drain()
 
         try:
-            msg = await asyncio.wait_for(fut, timeout=30)
+            msg = await asyncio.wait_for(fut, timeout=20)
         except asyncio.TimeoutError as exc:
             self._pending.pop(req_id, None)
-            raise RuntimeError(f"Bridge timeout on {method}") from exc
+            print(f"[bridge] timeout on {method} — restarting engine", flush=True)
+            try:
+                await self.stop()
+            except Exception:
+                pass
+            self._proc = None
+            raise RuntimeError(f"Game engine stalled on {method}. Try the action again.") from exc
 
         if not msg.get("ok"):
             raise RuntimeError(msg.get("error") or "Bridge error")

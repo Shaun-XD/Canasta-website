@@ -250,14 +250,13 @@ async def _player_action(sid: str, method: str, extra: dict[str, Any] | None = N
     params = {"roomId": meta["roomId"], "playerId": meta["playerId"], **(extra or {})}
     try:
         result = await bridge.call(method, params)
-        # Ack the acting client immediately. Fan-out to the rest of the
-        # lobby must not block the Socket.IO ack (that is what produced
-        # "operation has timed out" in the table UI).
         if result.get("error"):
             await emit_error(sid, result["error"])
-        ack = {"ok": True}
-        asyncio.create_task(broadcast_state(meta["roomId"], result["room"], result.get("game")))
-        return ack
+        room = result.get("room")
+        if room is not None:
+            asyncio.create_task(broadcast_state(meta["roomId"], room, result.get("game")))
+        print(f"[action] {method} ok sid={sid}", flush=True)
+        return {"ok": True}
     except Exception as exc:  # noqa: BLE001
         await emit_error(sid, str(exc))
         return {"ok": False, "error": str(exc)}
