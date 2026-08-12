@@ -110,25 +110,25 @@ export async function socketDraw(): Promise<RoomAck> {
   return emitAck('game:draw')
 }
 
-export function socketAttemptMeld(payload: {
+export async function socketAttemptMeld(payload: {
   handCardIds: string[]
   targetMeldId?: string | null
   selectedDiscardIds?: string[]
   slideEdge?: 'top' | 'bottom'
-}): void {
-  connectSocket().emit('game:attemptMeld', payload)
+}): Promise<RoomAck> {
+  return emitAck('game:attemptMeld', payload)
 }
 
-export function socketResolveSlide(payload: {
+export async function socketResolveSlide(payload: {
   edge: 'top' | 'bottom'
   handCardIds: string[]
   targetMeldId: string
-}): void {
-  connectSocket().emit('game:resolveSlide', payload)
+}): Promise<RoomAck> {
+  return emitAck('game:resolveSlide', payload)
 }
 
-export function socketDiscard(cardId: string): void {
-  connectSocket().emit('game:discard', { cardId })
+export async function socketDiscard(cardId: string): Promise<RoomAck> {
+  return emitAck('game:discard', { cardId })
 }
 
 export function socketMoveWild(meldId: string): void {

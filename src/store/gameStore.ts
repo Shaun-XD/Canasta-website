@@ -300,21 +300,38 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
     },
     onGameState: (game) => {
       const prev = get()
-      set({
-        game,
-        // Clear ephemeral UI selection when server advances turn / phase.
-        ...(game &&
-        prev.game &&
+      const localId = prev.localPlayerId
+      const handIds = new Set(
+        game && localId ? (game.hands[localId] ?? []).map((c) => c.id) : [],
+      )
+      const turnChanged =
+        !!game &&
+        !!prev.game &&
         (game.turn.activePlayerId !== prev.game.turn.activePlayerId ||
           game.turn.phase !== prev.game.turn.phase ||
           game.turn.turnNumber !== prev.game.turn.turnNumber)
+
+      // Always drop card ids that are no longer in the server hand. Online melds
+      // keep the same turn/phase, so without this prune the next Meld still
+      // sends ids from the previous meld → "Selected cards are not all in hand."
+      const prunedSelected = turnChanged
+        ? []
+        : prev.selectedCardIds.filter((id) => handIds.has(id))
+
+      const clearTopTouch = turnChanged || game?.turn.phase !== 'draw'
+
+      set({
+        game,
+        selectedCardIds: prunedSelected,
+        ...(turnChanged
           ? {
-              selectedCardIds: [],
               selectedMeldId: null,
               topTouchInProgress: false,
               selectedDiscardIds: [],
             }
-          : {}),
+          : clearTopTouch
+            ? { topTouchInProgress: false, selectedDiscardIds: [] }
+            : {}),
       })
     },
     onActionError: (error) => set({ lastActionError: error }),
@@ -970,21 +987,52 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (game.turn.activePlayerId !== localPlayerId) return
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
-      const hand = game.hands[localPlayerId]
+      const hand = game.hands[localPlayerId] ?? []
+      const handIds = new Set(hand.map((c) => c.id))
+      // Never send orphaned selection ids to the server (common after online melds).
+      const validSelected = selectedCardIds.filter((id) => handIds.has(id))
+      if (validSelected.length !== selectedCardIds.length) {
+        set({ selectedCardIds: validSelected })
+      }
 
       if (playMode === 'online') {
         const topCard = game.discardPile.cards[game.discardPile.cards.length - 1]
+        const inDrawTopTouch = topTouchInProgress && game.turn.phase === 'draw'
         const meldDiscardIds =
-          topTouchInProgress && topCard
+          inDrawTopTouch && topCard
             ? selectedDiscardIds.length > 0 && selectedDiscardIds.includes(topCard.id)
-              ? selectedDiscardIds
+              ? selectedDiscardIds.filter((id) => game.discardPile.cards.some((c) => c.id === id))
               : [topCard.id]
             : []
-        socketAttemptMeld({
-          handCardIds: selectedCardIds,
-          targetMeldId: selectedMeldId,
-          selectedDiscardIds: meldDiscardIds,
-        })
+        void (async () => {
+          set({ lastActionError: null })
+          let ack = await socketAttemptMeld({
+            handCardIds: validSelected,
+            targetMeldId: selectedMeldId,
+            selectedDiscardIds: meldDiscardIds,
+          })
+          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+            const rejoined = await get().actions.rejoinOnlineSession()
+            if (rejoined) {
+              ack = await socketAttemptMeld({
+                handCardIds: validSelected,
+                targetMeldId: selectedMeldId,
+                selectedDiscardIds: meldDiscardIds,
+              })
+            }
+          }
+          if (!ack.ok) {
+            set({ lastActionError: ack.error || 'Could not meld.' })
+            return
+          }
+          // Server broadcast prunes; clear immediately so a rapid second meld is clean.
+          set({
+            selectedCardIds: [],
+            selectedMeldId: null,
+            topTouchInProgress: false,
+            selectedDiscardIds: [],
+          })
+        })()
         return
       }
 
@@ -1007,7 +1055,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         const result = attemptMeldAction({
           hand,
           team,
-          selectedHandCardIds: selectedCardIds,
+          selectedHandCardIds: validSelected,
           targetMeldId: selectedMeldId,
           topTouch: { discardPile: game.discardPile.cards, selectedDiscardIds: meldDiscardIds },
         })
@@ -1026,62 +1074,84 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
         const usedIds = new Set(result.usedDiscardCards.map((c) => c.id))
         const restOfPile = game.discardPile.cards.filter((c) => !usedIds.has(c.id))
-        const combinedHand = sortHand([...result.hand, ...restOfPile])
-        const claim = tryClaimPozzetto(game, team, localPlayerId, combinedHand, 'meld-empty', combinedHand.length, localPlayerId)
-
-        const nextRoom = withTeam(room, team.id, (t) => ({ ...t, melds: meldsAfter, pozzetto: claim.pozzetto }))
+        let handAfter = sortHand([...result.hand, ...restOfPile])
+        const claim = tryClaimPozzetto(
+          game,
+          { ...team, melds: meldsAfter },
+          localPlayerId,
+          handAfter,
+          'meld-empty',
+          handAfter.length,
+          localPlayerId,
+        )
+        handAfter = claim.hand
+        const teamAfter: Team = { ...team, melds: meldsAfter, pozzetto: claim.pozzetto }
+        if (isIllegalEmptyHand(teamAfter, handAfter.length)) {
+          set({
+            lastActionError:
+              'Empty-hand foul (−150): after Pozzetto is claimed you must keep ≥1 card unless your team can Show.',
+          })
+          return
+        }
 
         set({
-          room: nextRoom,
+          room: withTeam(room, team.id, (t) => ({
+            ...t,
+            melds: meldsAfter,
+            pozzetto: claim.pozzetto,
+          })),
           game: {
             ...game,
             discardPile: { cards: [] },
+            hands: { ...game.hands, [localPlayerId]: handAfter },
             pozzettoStacks: claim.pozzettoStacks,
-            hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
             turn: { ...game.turn, phase: 'action', hasDrawnThisTurn: true },
-            lastAcquired:
-              restOfPile.length > 0
-                ? { playerId: localPlayerId, cardIds: restOfPile.map((c) => c.id), at: Date.now() }
-                : game.lastAcquired,
+            lastAcquired: {
+              playerId: localPlayerId,
+              cardIds: [...result.usedDiscardCards.map((c) => c.id), ...restOfPile.map((c) => c.id)],
+              at: Date.now(),
+            },
+            pendingSlide: null,
           },
-          topTouchInProgress: false, selectedDiscardIds: [],
           selectedCardIds: [],
           selectedMeldId: null,
+          topTouchInProgress: false,
+          selectedDiscardIds: [],
           lastActionError: null,
         })
         return
       }
 
-      // Normal in-hand meld (item 3): create a new meld or append to a
-      // targeted existing one, auto-detecting Set vs Sequence.
-      if (game.turn.phase !== 'action') {
-        set({ lastActionError: 'You can only meld during your action phase (after drawing).' })
+      if (game.turn.phase !== 'action') return
+
+      if (validSelected.length === 0 && !selectedMeldId) {
+        set({ lastActionError: 'Select hand cards to meld.' })
         return
       }
-      if (selectedCardIds.length === 0 && !selectedMeldId) {
-        set({ lastActionError: 'Select hand cards to meld, or a meld group to append to.' })
-        return
-      }
-      if (selectedCardIds.length === 0) {
-        set({ lastActionError: 'Select at least one hand card to meld.' })
+      if (validSelected.length === 0) {
+        set({ lastActionError: 'Select hand cards to meld.' })
         return
       }
 
       const result = attemptMeldAction({
         hand,
         team,
-        selectedHandCardIds: selectedCardIds,
+        selectedHandCardIds: validSelected,
         targetMeldId: selectedMeldId,
       })
 
       if (!result.ok) {
-        if (result.needsSlideChoice && selectedMeldId) {
+        if (result.needsSlideChoice) {
           set({
             game: {
               ...game,
-              pendingSlide: { teamId: team.id, meldId: selectedMeldId, displacedWildCardId: result.needsSlideChoice.displacedWildCardId },
+              pendingSlide: {
+                teamId: team.id,
+                meldId: selectedMeldId!,
+                displacedWildCardId: result.needsSlideChoice.displacedWildCardId,
+              },
             },
-            lastActionError: null,
+            lastActionError: result.error,
           })
           return
         }
@@ -1094,9 +1164,17 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
           ? team.melds.map((m) => (m.id === result.meld.id ? result.meld : m))
           : [...team.melds, result.meld]
 
-      const claim = tryClaimPozzetto(game, team, localPlayerId, result.hand, 'meld-empty', result.hand.length, localPlayerId)
-      const teamAfterClaim: Team = { ...team, melds: meldsAfter, pozzetto: claim.pozzetto }
-      if (isIllegalEmptyHand(teamAfterClaim, claim.hand.length)) {
+      const claim = tryClaimPozzetto(
+        game,
+        { ...team, melds: meldsAfter },
+        localPlayerId,
+        result.hand,
+        'meld-empty',
+        result.hand.length,
+        localPlayerId,
+      )
+      const teamAfter: Team = { ...team, melds: meldsAfter, pozzetto: claim.pozzetto }
+      if (isIllegalEmptyHand(teamAfter, claim.hand.length)) {
         set({
           lastActionError:
             'Empty-hand foul (−150): after Pozzetto is claimed you must keep ≥1 card unless your team can Show.',
@@ -1104,20 +1182,27 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         return
       }
 
-      const nextRoom = withTeam(room, team.id, (t) => ({ ...t, melds: meldsAfter, pozzetto: claim.pozzetto }))
+      const nextRoom = withTeam(room, team.id, (t) => ({
+        ...t,
+        melds: meldsAfter,
+        pozzetto: claim.pozzetto,
+      }))
       const nextGame: GameState = {
         ...game,
-        pozzettoStacks: claim.pozzettoStacks,
         hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
+        pozzettoStacks: claim.pozzettoStacks,
+        pendingSlide: null,
       }
-      const teamAfter = nextRoom.teams.find((t) => t.id === team.id)!
-      const autoShow = tryAutoShowEnd(nextRoom, nextGame, teamAfter, localPlayerId)
+      const teamForShow = nextRoom.teams.find((t) => t.id === team.id)!
+      const autoShow = tryAutoShowEnd(nextRoom, nextGame, teamForShow, localPlayerId)
       if (autoShow.ended) {
         set({
           room: autoShow.room,
           game: autoShow.game,
           selectedCardIds: [],
           selectedMeldId: null,
+          topTouchInProgress: false,
+          selectedDiscardIds: [],
           lastActionError: null,
         })
         return
@@ -1128,6 +1213,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         game: nextGame,
         selectedCardIds: [],
         selectedMeldId: null,
+        topTouchInProgress: false,
+        selectedDiscardIds: [],
         lastActionError: null,
       })
     },
@@ -1218,16 +1305,37 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
       if (game.turn.phase !== 'action' && game.turn.phase !== 'discard') return
-      if (selectedCardIds.length !== 1) return
+      const hand = game.hands[localPlayerId] ?? []
+      const validSelected = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
+      if (validSelected.length !== selectedCardIds.length) {
+        set({ selectedCardIds: validSelected })
+      }
+      if (validSelected.length !== 1) {
+        set({ lastActionError: 'Select exactly one card in your hand to discard.' })
+        return
+      }
+      const cardId = validSelected[0]
       if (playMode === 'online') {
-        socketDiscard(selectedCardIds[0])
+        void (async () => {
+          set({ lastActionError: null })
+          let ack = await socketDiscard(cardId)
+          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+            const rejoined = await get().actions.rejoinOnlineSession()
+            if (rejoined) ack = await socketDiscard(cardId)
+          }
+          if (!ack.ok) {
+            set({ lastActionError: ack.error || 'Could not discard.' })
+            return
+          }
+          set({ selectedCardIds: [], selectedMeldId: null, topTouchInProgress: false, selectedDiscardIds: [] })
+        })()
         return
       }
 
       const team = findTeamForPlayer(room, localPlayerId)
       if (!team) return
 
-      const result = performDiscard(game.hands[localPlayerId], selectedCardIds[0], game.discardPile.cards)
+      const result = performDiscard(game.hands[localPlayerId], cardId, game.discardPile.cards)
       if (!result) return
 
       const wasClaimedBefore = team.pozzetto.claimed
