@@ -1,0 +1,20 @@
+---
+description: Do not regress online stock draw when changing sockets, animations, or snapshots
+alwaysApply: true
+---
+
+# Stock draw is sacred
+
+Online pickup from the stock goes through `drawFromStock` → `socketDraw` / `emitAck` → server `draw` → `applyOnlineSnapshot`. Animation, timeout, and ack patches have broken this repeatedly.
+
+## Never
+
+- Retry a draw (or any table action) on timeout / "did not respond" / "operation has timed out". Retry only on `Not in a room`.
+- Skip `applyOnlineSnapshot` when **stock length**, **local hand length**, or **lastAcquired.at** changed — that drops the drawn card from the UI.
+- Nest a `<button>` `Card` inside the stock `<button>`. Decorative / face-down cards must be a `<div>` (`Card` without `onClick`).
+- Use `socket.timeout().emit` for game actions (python-socketio acks get lost → false timeouts).
+- Fire-and-forget `create_task(broadcast)` without keeping a task reference (guests miss state).
+
+## After any change to `gameStore`, `socket.ts`, `Table.tsx`, `Card.tsx`, or `server/main.py`
+
+Run `npx vitest run src/store/onlineInvariants.test.ts` and confirm a local draw still adds one card to the hand and sets phase to `action`.

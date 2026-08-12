@@ -11,6 +11,7 @@ import type {
 import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam, type MaxPlayers } from '../types/game'
 import { buildShuffledDeck, dealHands, sortHand } from '../lib/deck'
 import { seedRemotePlayerFlights } from '../lib/seedRemoteFlights'
+import { shouldRetryOnlineAction, shouldSkipOnlineSnapshot } from './onlineInvariants'
 import { initialPozzettoState, shouldClaimPozzettoOnDiscard, shouldClaimPozzettoOnMeldEmpty } from '../engine/pozzetto'
 import { evaluateShowEligibility } from '../engine/showEligibility'
 import { EMPTY_HAND_FOUL_PENALTY, isIllegalEmptyHand } from '../engine/emptyHandFoul'
@@ -90,7 +91,7 @@ async function runOnlineAction(
     // Only re-bind + retry when the socket lost its room mapping. Never retry
     // on timeout — the action may already have succeeded (e.g. stock draw),
     // and a second draw fails with "Already drew this turn".
-    if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+    if (!ack.ok && shouldRetryOnlineAction(ack.error)) {
       const rejoined = await get().actions.rejoinOnlineSession()
       if (rejoined) ack = await run()
     }
@@ -180,10 +181,13 @@ function applyOnlineSnapshot(opts: {
     return
   }
 
-  // Same lastPlay already applied (actor ack, then lobby broadcast).
-  // Do not skip when lastPlay is missing — guests rely on that path for
-  // opponent meld/draw diffs, and skipping hid their flights.
-  if (prev.game && game.lastPlay && prev.game.lastPlay?.at === game.lastPlay.at) {
+  if (
+    shouldSkipOnlineSnapshot({
+      prevGame: prev.game,
+      nextGame: game,
+      localPlayerId: localId,
+    })
+  ) {
     if (room && room !== prev.room) {
       set({ room, playMode: 'online', ...(playerId ? { localPlayerId: playerId } : {}) })
     }
@@ -881,7 +885,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
             lastActionError: null,
           })
           let ack = await socketSetReady(nextReady)
-          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+          if (!ack.ok && shouldRetryOnlineAction(ack.error)) {
             const rejoined = await get().actions.rejoinOnlineSession()
             if (rejoined) ack = await socketSetReady(nextReady)
           }
@@ -1043,7 +1047,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         void (async () => {
           set({ lastActionError: null })
           const ok = await runOnlineAction(get, set, () => socketDraw(), 'Could not draw from stock.')
-          if (!ok) return
+          if (!ok) {
+            const live = get().game
+            // Broadcast often applies the draw before the ack. Don't surface a
+            // timeout / empty-ack as a failed pickup, and never retry draw.
+            if (live?.turn.hasDrawnThisTurn && live.turn.phase !== 'draw') {
+              set({ lastActionError: null })
+            }
+          }
         })()
         return
       }

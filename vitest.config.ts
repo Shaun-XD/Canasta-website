@@ -7,6 +7,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     // Engine unit tests don't need DOM; avoid jsdom ESM/CJS sniffs on Windows.
-    environmentMatchGlobs: [['src/engine/**', 'node']],
+    environmentMatchGlobs: [
+      ['src/engine/**', 'node'],
+      ['**/onlineInvariants.test.ts', 'node'],
+    ],
   },
 })
