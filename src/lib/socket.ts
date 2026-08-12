@@ -106,8 +106,8 @@ export async function socketStartGame(): Promise<RoomAck> {
   return emitAck('room:start')
 }
 
-export function socketDraw(): void {
-  connectSocket().emit('game:draw')
+export async function socketDraw(): Promise<RoomAck> {
+  return emitAck('game:draw')
 }
 
 export function socketAttemptMeld(payload: {

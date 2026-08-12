@@ -80,7 +80,7 @@ function CardFace({ rank, suit }: { rank: Rank; suit: Suit | null }) {
       src={faceSrc(rank, suit)}
       alt={`${rank}${suit ? ` of ${suit}` : ''}`}
       draggable={false}
-      className="block h-full w-full object-cover"
+      className="pointer-events-none block h-full w-full object-cover"
     />
   )
 }
@@ -99,18 +99,27 @@ export const Card = memo(function Card({
 
   const showFace = !(faceDown || !rank)
 
+  // Decorative cards (no onClick) must be a <div>, not a <button>. Nesting a
+  // button inside the stock pile's outer <button> breaks clicks in browsers.
+  const classNames = `relative shrink-0 overflow-hidden rounded-[8px] shadow-md transition-transform duration-150 ease-out ${
+    showFace ? 'box-border border border-[#5b7c99] bg-[#faf8f4]' : ''
+  } ${onClick ? 'cursor-pointer hover:-translate-y-1' : 'cursor-default'} ${
+    selected ? `ring-2 ring-yellow-300 ${liftOnSelect ? '-translate-y-3' : ''}` : ''
+  } ${className}`
+
+  const face = showFace ? <CardFace rank={rank!} suit={suit} /> : <CardBackFace />
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} style={{ width, height }} className={classNames}>
+        {face}
+      </button>
+    )
+  }
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ width, height }}
-      className={`relative shrink-0 overflow-hidden rounded-[8px] shadow-md transition-transform duration-150 ease-out ${
-        showFace ? 'box-border border border-[#5b7c99] bg-[#faf8f4]' : ''
-      } ${onClick ? 'cursor-pointer hover:-translate-y-1' : 'cursor-default'} ${
-        selected ? `ring-2 ring-yellow-300 ${liftOnSelect ? '-translate-y-3' : ''}` : ''
-      } ${className}`}
-    >
-      {showFace ? <CardFace rank={rank!} suit={suit} /> : <CardBackFace />}
-    </button>
+    <div style={{ width, height }} className={classNames} aria-hidden>
+      {face}
+    </div>
   )
 })

@@ -889,7 +889,17 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'draw') return
       if (game.stock.length === 0) return
       if (playMode === 'online') {
-        socketDraw()
+        void (async () => {
+          set({ lastActionError: null })
+          let ack = await socketDraw()
+          if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+            const rejoined = await get().actions.rejoinOnlineSession()
+            if (rejoined) ack = await socketDraw()
+          }
+          if (!ack.ok) {
+            set({ lastActionError: ack.error || 'Could not draw from stock.' })
+          }
+        })()
         return
       }
 
