@@ -7,6 +7,7 @@ sockets/rooms and delegates mutations to `game_bridge/bridge.ts`.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from contextlib import asynccontextmanager
@@ -122,16 +123,19 @@ async def broadcast_state(room_id: str, room: dict[str, Any], game: dict[str, An
         if meta.get("roomId") != room_id:
             continue
         pid = meta["playerId"]
-        await sio.emit(
-            "room:state",
-            {"room": sanitize_room(room, pid), "playerId": pid},
-            to=sid,
-        )
-        await sio.emit(
-            "game:state",
-            {"game": sanitize_game(game, pid), "playerId": pid},
-            to=sid,
-        )
+        try:
+            await sio.emit(
+                "room:state",
+                {"room": sanitize_room(room, pid), "playerId": pid},
+                to=sid,
+            )
+            await sio.emit(
+                "game:state",
+                {"game": sanitize_game(game, pid), "playerId": pid},
+                to=sid,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[socket] broadcast to {sid} failed: {exc}", flush=True)
 
 
 async def emit_error(sid: str, message: str) -> None:
@@ -246,10 +250,14 @@ async def _player_action(sid: str, method: str, extra: dict[str, Any] | None = N
     params = {"roomId": meta["roomId"], "playerId": meta["playerId"], **(extra or {})}
     try:
         result = await bridge.call(method, params)
-        await broadcast_state(meta["roomId"], result["room"], result.get("game"))
+        # Ack the acting client immediately. Fan-out to the rest of the
+        # lobby must not block the Socket.IO ack (that is what produced
+        # "operation has timed out" in the table UI).
         if result.get("error"):
             await emit_error(sid, result["error"])
-        return {"ok": True}
+        ack = {"ok": True}
+        asyncio.create_task(broadcast_state(meta["roomId"], result["room"], result.get("game")))
+        return ack
     except Exception as exc:  # noqa: BLE001
         await emit_error(sid, str(exc))
         return {"ok": False, "error": str(exc)}

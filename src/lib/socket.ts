@@ -49,21 +49,64 @@ export function disconnectSocket(): void {
   if (socket?.connected) socket.disconnect()
 }
 
+export function isSocketConnected(): boolean {
+  return !!socket?.connected
+}
+
+function friendlyAckError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+  const lower = raw.toLowerCase()
+  if (lower.includes('timeout') || lower.includes('timed out')) {
+    return 'The server did not respond in time. It may be restarting — wait a few seconds and try again.'
+  }
+  if (lower.includes('websocket') || lower.includes('xhr poll') || lower.includes('transport')) {
+    return 'Lost connection to the server. Reconnecting — try again in a moment.'
+  }
+  return raw || 'Request failed.'
+}
+
+function waitUntilConnected(s: Socket, ms: number): Promise<boolean> {
+  if (s.connected) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      s.off('connect', onConnect)
+      resolve(s.connected)
+    }, ms)
+    const onConnect = () => {
+      window.clearTimeout(timer)
+      resolve(true)
+    }
+    s.once('connect', onConnect)
+    if (!s.connected) s.connect()
+  })
+}
+
 function emitAck(event: string, payload?: unknown): Promise<RoomAck> {
   const s = connectSocket()
   return new Promise((resolve) => {
     const fail = (error: string) => resolve({ ok: false, error })
-    const timer = window.setTimeout(() => fail('Server timeout — is the backend running?'), 12000)
-    try {
-      s.timeout(10000).emit(event, payload ?? {}, (err: Error | null, res: RoomAck) => {
+    void (async () => {
+      const connected = await waitUntilConnected(s, 4000)
+      if (!connected) {
+        fail('Lost connection to the server. Reconnecting — try again in a moment.')
+        s.connect()
+        return
+      }
+      const timer = window.setTimeout(
+        () => fail('The server did not respond in time. It may be restarting — wait a few seconds and try again.'),
+        15000,
+      )
+      try {
+        s.timeout(12000).emit(event, payload ?? {}, (err: Error | null, res: RoomAck) => {
+          window.clearTimeout(timer)
+          if (err) fail(friendlyAckError(err))
+          else resolve(res ?? { ok: false, error: 'Empty server response.' })
+        })
+      } catch (err) {
         window.clearTimeout(timer)
-        if (err) fail(err.message || 'Request failed.')
-        else resolve(res ?? { ok: false, error: 'Empty server response.' })
-      })
-    } catch (err) {
-      window.clearTimeout(timer)
-      fail(err instanceof Error ? err.message : 'Request failed.')
-    }
+        fail(friendlyAckError(err))
+      }
+    })()
   })
 }
 

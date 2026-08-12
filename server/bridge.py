@@ -25,6 +25,16 @@ class GameBridge:
         if self._proc and self._proc.returncode is None:
             return
 
+        if self._reader_task:
+            self._reader_task.cancel()
+            self._reader_task = None
+        self._proc = None
+        self._ready = asyncio.Event()
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError("Game engine restarted."))
+        self._pending.clear()
+
         env = os.environ.copy()
         # Prefer local node_modules/.bin/tsx after npm install in game_bridge/
         tsx = BRIDGE_DIR / "node_modules" / ".bin" / "tsx"

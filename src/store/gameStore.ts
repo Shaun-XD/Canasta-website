@@ -79,6 +79,18 @@ const EMPTY_SELECTION = {
   selectedDiscardIds: [] as string[],
 }
 
+function isTransientOnlineError(error: string | undefined): boolean {
+  const lower = (error || '').toLowerCase()
+  return (
+    lower.includes('not in a room') ||
+    lower.includes('timed out') ||
+    lower.includes('timeout') ||
+    lower.includes('did not respond') ||
+    lower.includes('lost connection') ||
+    lower.includes('reconnecting')
+  )
+}
+
 async function runOnlineAction(
   get: () => GameStoreState,
   set: (partial: Partial<GameStoreState>) => void,
@@ -87,7 +99,7 @@ async function runOnlineAction(
 ): Promise<boolean> {
   try {
     let ack = await run()
-    if (!ack.ok && (ack.error || '').toLowerCase().includes('not in a room')) {
+    if (!ack.ok && isTransientOnlineError(ack.error)) {
       const rejoined = await get().actions.rejoinOnlineSession()
       if (rejoined) ack = await run()
     }
