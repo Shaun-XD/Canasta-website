@@ -96,7 +96,7 @@ export function Landing() {
             Canasta
           </h1>
           <p className="text-sm font-medium text-white/60">Online multiplayer · 1v1 or 2v2</p>
-          <p className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.38em] text-white/35">
+          <p className="mt-1.5 text-sm font-bold uppercase tracking-[0.38em] text-white drop-shadow">
             By AVK
           </p>
         </div>
