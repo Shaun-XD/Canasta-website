@@ -15,6 +15,7 @@ import {
   attemptMeldAction,
   createMeldFromHand,
   getNextPlayerId,
+  performDiscard,
   performDrawFromStock,
   topDiscardMustBePlayed,
 } from './turnEngine'
