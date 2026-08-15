@@ -25,8 +25,10 @@ function teamMeldScore(team: Team): { meldPoints: number; canastaBonuses: number
  *
  * `showingTeamId` is set for a Normal Show ending, null for sudden-death.
  * `handsByTeam` maps each team to the concatenated hands of both of its
- * players at the moment the round ended (used only for the opponent-hand
- * penalty in a Normal Show ending; ignored entirely in sudden-death).
+ * players at the moment the round ended. In a Normal Show ending, each team
+ * is awarded the leftover-card point total of the other team's hands
+ * (winner from loser, and loser from winner). Ignored entirely in
+ * sudden-death.
  *
  * TODO(rules): the "wrong meld detected" (-100, cards removed from
  * scoring) and "unclaimed Pozzetto" (-100) penalties are carried over from
@@ -52,7 +54,7 @@ export function scoreRound(
     const showBonus = endingType === 'show' && team.id === showingTeamId ? 100 : 0
 
     let opponentHandPenalty = 0
-    if (endingType === 'show' && showingTeamId && team.id === showingTeamId) {
+    if (endingType === 'show' && showingTeamId) {
       const opponentHand = handsByTeam[otherTeamId(team.id)] ?? []
       opponentHandPenalty = opponentHand.reduce((sum, c) => sum + cardPointValue(c), 0)
     }

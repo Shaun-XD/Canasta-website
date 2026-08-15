@@ -55,7 +55,7 @@ export function RoundEndModal({
                   <div className="mt-2 space-y-1 border-t border-white/10 pt-2">
                     <ScoreLine label="Meld card points" value={breakdown.meldPoints} />
                     <ScoreLine label="Canasta/Limpa bonuses" value={breakdown.canastaBonuses} />
-                    <ScoreLine label="Opponent hand penalty (to you)" value={breakdown.opponentHandPenalty} />
+                    <ScoreLine label="Opponent leftover cards" value={breakdown.opponentHandPenalty} />
                     <ScoreLine label="Show bonus" value={breakdown.showBonus} />
                     <ScoreLine label="Zero Canasta penalty" value={breakdown.zeroCanastaPenalty} />
                     <ScoreLine label="Unclaimed Pozzetto penalty" value={breakdown.unclaimedPozzettoPenalty} />

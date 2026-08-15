@@ -25,6 +25,10 @@ import { cardPointValue, RANK_BY_ORDER, RANK_ORDER, sequenceRankOrder } from './
  * 2-natural set openers, or a dry high-probability meld (needed cards not
  * mostly locked on enemy piles). Never spoil a Limpa except the ≥400 /
  * last-card / only-legal-wild exception.
+ *
+ * Meld policy: append onto existing piles before opening new ones. Grow
+ * toward canastas rather than many 3-card seeds. 7-8-9 are sequence
+ * connectors — almost never open them as sets.
  */
 
 /** Copies of each natural rank in a 2-deck Canasta shoe (4 suits × 2). */
@@ -106,6 +110,31 @@ export const AI_WEIGHTS = {
    * canasta finish — that already gets canastaComplete).
    */
   wildHighOddsExtend: 80,
+  /**
+   * Penalty when a new set would consume a card that already forms a legal
+   * 3+ same-suit sequence in hand. Applied in scoring as a backup to the
+   * hard skip when opening new sets.
+   */
+  setStealsSequence: -400,
+  /**
+   * Penalty for opening a 3-card set. Kept modest so a 2-natural + wild
+   * opener still scores positive; the hard gate blocks extra 3-card seeds
+   * when the table already has short piles to grow.
+   */
+  shortNewMeld: -70,
+  /** Prefer sequences over equal-length sets (beats Ace/8 point-value ties). */
+  sequenceOverSet: 40,
+  /** Prefer feeding a 7/8/9 onto a sequence rather than a competing set. */
+  connectorOnSequence: 120,
+  /** Extra discard cost for 7/8/9 (sequence glue). */
+  connectorDiscard: 35,
+  /** Extra discard cost when a same-suit neighbor of a connector is in hand. */
+  connectorNeighborDiscard: 40,
+  /**
+   * Extra canasta-progress on appends as a meld approaches 7
+   * (4→5, 5→6, 6→7 on top of the base canastaProgress).
+   */
+  canastaGrowNear: 55,
 } as const
 
 /**
@@ -141,6 +170,18 @@ export function defaultAiContext(teamId: TeamId, ownMelds: Meld[] = []): AiPlayC
     pozzettoClaimed: false,
     mayEmptyForShow: false,
   }
+}
+
+/** 7-8-9 are sequence glue; they should almost never open a set. */
+export const CONNECTOR_RANKS: readonly Rank[] = ['7', '8', '9']
+
+export function isConnectorRank(rank: Rank): boolean {
+  return rank === '7' || rank === '8' || rank === '9'
+}
+
+/** Allow a 7/8/9 set only when the canasta is in hand, or when going out. */
+export function mayOpenConnectorSet(naturalCount: number, ctx: AiPlayContext): boolean {
+  return naturalCount >= 5 || ctx.mayEmptyForShow
 }
 
 /** Minimal Team stub for Limpa-protection checks from public melds. */
@@ -316,13 +357,26 @@ function pointsOf(cards: CardModel[]): number {
   return cards.reduce((sum, c) => sum + cardPointValue(c), 0)
 }
 
+function inferMeldKind(cards: CardModel[]): 'set' | 'sequence' {
+  const naturals = cards.filter((c) => !isWild(c))
+  if (naturals.length === 0) return 'set'
+  const rank = naturals[0].rank
+  return naturals.every((c) => c.rank === rank) ? 'set' : 'sequence'
+}
+
 /** Score for laying `cards` as a brand-new meld (Set or Sequence). */
-export function scoreNewMeld(cards: CardModel[]): number {
+export function scoreNewMeld(
+  cards: CardModel[],
+  opts?: { kind?: 'set' | 'sequence'; ctx?: AiPlayContext },
+): number {
+  const kind = opts?.kind ?? inferMeldKind(cards)
   let score = cards.length * AI_WEIGHTS.cardLaid + pointsOf(cards) * AI_WEIGHTS.pointValue
   const wilds = countWilds(cards)
   if (wilds > 0) score += wilds * AI_WEIGHTS.wildSpend
   if (cards.length >= 7) score += AI_WEIGHTS.canastaComplete
   else if (cards.length >= 5) score += (cards.length - 4) * AI_WEIGHTS.canastaProgress
+  if (kind === 'sequence') score += AI_WEIGHTS.sequenceOverSet
+  if (kind === 'set' && cards.length === 3) score += AI_WEIGHTS.shortNewMeld
   return score
 }
 
@@ -368,6 +422,7 @@ export function scoreAppend(
   const nextLen = meld.slots.length + 1
   if (nextLen >= 7 && meld.slots.length < 7) score += AI_WEIGHTS.canastaComplete
   else if (nextLen >= 5) score += AI_WEIGHTS.canastaProgress
+  if (nextLen >= 5 && nextLen <= 7) score += AI_WEIGHTS.canastaGrowNear
   if (isWild(card) && isHighProbabilityWildExtend(meld, ctx) && meld.slots.length < 6) {
     score += AI_WEIGHTS.wildHighOddsExtend
   }
@@ -381,6 +436,18 @@ export function scoreAppend(
   // Sliding a natural into a wild slot frees the wild — strongly preferred
   // over opening a fresh set with that natural (e.g. 7♠ into 6-★-8-9-10).
   if (isSlideNaturalization(meld, card)) score += AI_WEIGHTS.slideNaturalize
+  // 7/8/9: sequence beats set when both are legal feeds.
+  if (!isWild(card) && isConnectorRank(card.rank)) {
+    if (meld.type === 'sequence') {
+      score += AI_WEIGHTS.connectorOnSequence
+    } else if (meld.type === 'set') {
+      const aCtx = appendCtxFromAi(ctx, ctx.handSize ?? 0)
+      const seqAlt = ctx.ownMelds.some(
+        (m) => m.id !== meld.id && m.type === 'sequence' && canAppendToMeld(m, card, aCtx),
+      )
+      if (seqAlt) score -= AI_WEIGHTS.connectorOnSequence
+    }
+  }
   return score
 }
 
@@ -540,10 +607,15 @@ export function scoreTopTouchPlan(opts: {
   melds: Meld[]
   targetMeld?: Meld | null
   burnPenalty?: number
+  ctx?: AiPlayContext
 }): number | null {
   const wildsInUnlock = countWilds(opts.meldCards)
   const vital = scoreVitalRemainder(opts.remainderPile, opts.melds)
   if (!vitalJustifiesWildUnlock(vital, wildsInUnlock)) return null
+
+  if (opts.kind === 'set' && isConnectorRankSet(opts.meldCards)) {
+    if (!allowConnectorSetUnlock(opts.meldCards, vital, opts.ctx)) return null
+  }
 
   const intrinsic = unlockIntrinsicScore(opts.meldCards, opts.kind, opts.targetMeld)
   const hasRealVital = vital.maxTier === 'important' || vital.maxTier === 'critical'
@@ -602,7 +674,7 @@ export function scoreTopTouchUnlock(opts: {
   const meldScore =
     opts.kind === 'append'
       ? opts.meldCards.reduce((s, c) => s + AI_WEIGHTS.cardLaid + cardPointValue(c) * AI_WEIGHTS.pointValue, 0)
-      : scoreNewMeld(opts.meldCards)
+      : scoreNewMeld(opts.meldCards, { kind: opts.kind })
   const remainder =
     opts.remainderPile.length * AI_WEIGHTS.pileRemainderCard +
     pointsOf(opts.remainderPile) * AI_WEIGHTS.pointValue * 0.25
@@ -619,6 +691,8 @@ export function scoreTopTouchUnlock(opts: {
  *   (e.g. table 6-7-8♠, hand 10-J-Q♠ — wait for 9/joker to join toward canasta)
  * - Sets whose canasta is impossible from public board counts (enemy locked
  *   too many copies of the rank)
+ * - 7/8/9 sets unless 5+ naturals are in hand or the team is going out
+ * - Extra 3-card openers when the table already has 2+ short (<5) piles
  *
  * Among brand-new melds, Sequences beat Sets on equal plus-sum scores.
  */
@@ -653,7 +727,10 @@ export function planAiMelds(
     }
     remaining = playable
 
-    const best = findBestNewMeld(remaining, teamId, blockedSetRanks, ctx)
+    const best = findBestNewMeld(remaining, teamId, blockedSetRanks, {
+      ...ctx,
+      ownMelds: tableMelds,
+    })
     if (!best || best.score <= 0) break
     if (remaining.length - best.plan.cardIds.length < floor) break
 
@@ -789,6 +866,63 @@ function ranksWithExistingSet(melds: Meld[]): Set<Rank> {
   return ranks
 }
 
+function countShortInProgress(melds: Meld[]): number {
+  return melds.filter((m) => m.slots.length < 5).length
+}
+
+function isConnectorSequenceSeed(cards: CardModel[], kind: 'set' | 'sequence'): boolean {
+  if (kind !== 'sequence') return false
+  const naturals = cards.filter((c) => !isWild(c))
+  return naturals.length >= 2 && naturals.every((c) => isConnectorRank(c.rank))
+}
+
+function shouldSkipShortOpener(
+  cards: CardModel[],
+  kind: 'set' | 'sequence',
+  ctx: AiPlayContext,
+): boolean {
+  if (ctx.mayEmptyForShow) return false
+  if (cards.length !== 3) return false
+  if (isConnectorSequenceSeed(cards, kind)) return false
+  return countShortInProgress(ctx.ownMelds) >= 2
+}
+
+/** Cards that already form a legal 3+ same-suit sequence in `hand`. */
+function sequenceCommittedCardIds(hand: CardModel[], teamId: TeamId): Set<string> {
+  const committed = new Set<string>()
+  const suits = new Set(
+    hand.filter((c) => c.rank !== 'JOKER' && c.suit).map((c) => c.suit as Suit),
+  )
+  for (const suit of suits) {
+    const suited = sortByRank(hand.filter((c) => c.suit === suit && c.rank !== 'JOKER'))
+    for (let i = 0; i < suited.length; i += 1) {
+      for (let j = i + 2; j < suited.length; j += 1) {
+        const group = suited.slice(i, j + 1)
+        if (!buildSequence(group, teamId).ok) continue
+        for (const card of group) committed.add(card.id)
+      }
+    }
+  }
+  return committed
+}
+
+function isConnectorRankSet(cards: CardModel[]): boolean {
+  const naturals = cards.filter((c) => !isWild(c))
+  if (naturals.length === 0) return false
+  const rank = naturals[0].rank
+  return isConnectorRank(rank) && naturals.every((c) => c.rank === rank)
+}
+
+function allowConnectorSetUnlock(
+  meldCards: CardModel[],
+  vital: VitalRemainderScore,
+  ctx?: AiPlayContext,
+): boolean {
+  const naturals = meldCards.filter((c) => !isWild(c))
+  if (mayOpenConnectorSet(naturals.length, ctx ?? defaultAiContext('team-a'))) return true
+  return vital.maxTier === 'important' || vital.maxTier === 'critical'
+}
+
 function findBestNewMeld(
   hand: CardModel[],
   teamId: TeamId,
@@ -805,8 +939,16 @@ function findBestNewMeld(
       if (natural && isHopelessNewSetRank(natural.rank, group.filter((c) => !isWild(c)).length, ctx)) {
         return
       }
+      if (
+        natural &&
+        isConnectorRank(natural.rank) &&
+        !mayOpenConnectorSet(group.filter((c) => !isWild(c)).length, ctx)
+      ) {
+        return
+      }
     }
-    const score = scoreNewMeld(group)
+    if (shouldSkipShortOpener(group, kind, ctx)) return
+    const score = scoreNewMeld(group, { kind, ctx })
     if (score <= 0) return
     const prev = best
     const bestWilds = prev
@@ -853,10 +995,12 @@ function findBestNewMeld(
   }
 
   // Sets — only when a rank isn't already on the table (append instead).
+  // Exclude cards already committed to a legal same-suit 3+ run in hand.
+  const committed = sequenceCommittedCardIds(hand, teamId)
   const naturalRanks = new Set(hand.filter((c) => !isWild(c)).map((c) => c.rank))
   for (const rank of naturalRanks) {
     if (blockedSetRanks.has(rank)) continue
-    const naturals = hand.filter((c) => c.rank === rank)
+    const naturals = hand.filter((c) => c.rank === rank && !committed.has(c.id))
     const wilds = hand.filter(isWild)
     if (naturals.length >= 3) consider(naturals, 'set')
     // Wild only when exactly 2 naturals — essential to open the set.
@@ -964,6 +1108,7 @@ export function planAiDraw(
   melds: Meld[],
   discardPile: CardModel[],
   teamId: TeamId,
+  ctx: AiPlayContext = defaultAiContext(teamId, melds),
 ): AiDrawPlan {
   const stockPlan: AiDrawPlan = {
     source: 'stock',
@@ -1004,6 +1149,7 @@ export function planAiDraw(
       melds,
       targetMeld: partial.targetMeld ?? null,
       burnPenalty,
+      ctx,
     })
     if (score === null || score <= 0) return
     consider({
@@ -1227,6 +1373,18 @@ export function pickAiDiscard(
     cost += opponentFeedDiscardPenalty(card, hand, ctx)
     if (cardFeedsAnyMeld(card, ctx.ownMelds)) cost += AI_WEIGHTS.feedTeammate
 
+    if (!isWild(card) && isConnectorRank(card.rank)) {
+      cost += AI_WEIGHTS.connectorDiscard
+      const hasNeighbor = hand.some(
+        (h) =>
+          h.id !== card.id &&
+          h.suit === card.suit &&
+          h.rank !== 'JOKER' &&
+          Math.abs(rankOrder(h.rank) - rankOrder(card.rank)) === 1,
+      )
+      if (hasNeighbor) cost += AI_WEIGHTS.connectorNeighborDiscard
+    }
+
     if (hopeless) {
       cost -= AI_WEIGHTS.hopelessRankDiscardRelief
     }
@@ -1286,7 +1444,7 @@ export function planAiTurn(
   teamId: TeamId,
   ctx: AiPlayContext = defaultAiContext(teamId, melds),
 ): AiTurnPlan {
-  const draw = planAiDraw(hand, melds, discardPile, teamId)
+  const draw = planAiDraw(hand, melds, discardPile, teamId, ctx)
 
   let workingHand = [...hand]
   let workingMelds = [...melds]

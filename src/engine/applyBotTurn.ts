@@ -171,7 +171,13 @@ export function applyBotTurn(
     const team = teamOf()
     if (!team) return { room, game }
     const hand = nextGame.hands[playerId] ?? []
-    const drawPlan = planAiDraw(hand, team.melds, nextGame.discardPile.cards, team.id)
+    const drawPlan = planAiDraw(
+      hand,
+      team.melds,
+      nextGame.discardPile.cards,
+      team.id,
+      aiContext(nextRoom, nextGame, team, hand.length),
+    )
     let drew = false
 
     if (drawPlan.source === 'top-touch' && nextGame.discardPile.cards.length > 0) {

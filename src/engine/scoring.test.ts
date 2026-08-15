@@ -45,10 +45,47 @@ describe('scoreRound - Normal Show ending', () => {
     expect(result.teams['team-a'].opponentHandPenalty).toBe(20)
     expect(result.teams['team-a'].showBonus).toBe(100)
 
-    // team-b: 0 meld points, -100 zero canasta, -100 unclaimed pozzetto
+    // team-b: 0 meld points, 0 leftover from winner (empty hand),
+    // -100 zero canasta, -100 unclaimed pozzetto
     expect(result.teams['team-b'].total).toBe(-200)
+    expect(result.teams['team-b'].opponentHandPenalty).toBe(0)
     expect(result.teams['team-b'].zeroCanastaPenalty).toBe(-100)
     expect(result.teams['team-b'].unclaimedPozzettoPenalty).toBe(-100)
+  })
+
+  it('mirrors leftover-hand points to the losing team from the showing team remaining cards', () => {
+    const teamA = makeTeam('team-a', {
+      pozzetto: { claimed: true, claimedByPlayerId: 'p1', activated: true },
+    })
+    const teamB = makeTeam('team-b', {
+      pozzetto: { claimed: true, claimedByPlayerId: 'p2', activated: true },
+    })
+
+    // Ace 15, K-8 10, 7-3 5, 2 10, Joker 30 → 15+10+10+5+5+10+30 = 85
+    const winningRemainder = [
+      c('A', 'hearts'),
+      c('K', 'spades'),
+      c('8', 'clubs'),
+      c('7', 'diamonds'),
+      c('3', 'hearts'),
+      c('2', 'spades'),
+      joker(),
+    ]
+    const losingRemainder = [c('Q', 'hearts')] // 10
+
+    const result = scoreRound(
+      1,
+      'show',
+      [teamA, teamB],
+      { 'team-a': winningRemainder, 'team-b': losingRemainder },
+      'team-a',
+    )
+
+    expect(result.teams['team-a'].opponentHandPenalty).toBe(10)
+    expect(result.teams['team-b'].opponentHandPenalty).toBe(85)
+    // both teams: leftover cards + zero-canasta (−100)
+    expect(result.teams['team-a'].total).toBe(10 + 100 - 100)
+    expect(result.teams['team-b'].total).toBe(85 - 100)
   })
 
   it('does not apply the zero-canasta penalty when a team has completed a canasta', () => {

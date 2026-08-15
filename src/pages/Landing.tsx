@@ -85,8 +85,17 @@ export function Landing() {
   }
 
   return (
-    <div className="felt-bg flex min-h-screen flex-col items-center justify-center px-4 py-10">
-      <div className="mb-10 flex items-center gap-4">
+    <div className="felt-bg relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-10">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 select-none overflow-hidden"
+      >
+        <span className="absolute left-1/2 top-[11%] -translate-x-1/2 rotate-[-16deg] whitespace-nowrap text-[clamp(5rem,20vw,13rem)] font-black uppercase tracking-[0.22em] text-white/[0.065]">
+          By AVK
+        </span>
+      </div>
+
+      <div className="relative z-10 mb-10 flex items-center gap-4">
         <div className="flex gap-1 -rotate-6">
           <Card rank="A" suit="spades" width={54} />
           <Card rank="K" suit="hearts" width={54} className="rotate-6" />
@@ -96,10 +105,13 @@ export function Landing() {
             Canasta
           </h1>
           <p className="text-sm font-medium text-white/60">Online multiplayer · 1v1 or 2v2</p>
+          <p className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.38em] text-white/35">
+            By AVK
+          </p>
         </div>
       </div>
 
-      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-black/25 p-6 shadow-2xl backdrop-blur">
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-black/25 p-6 shadow-2xl backdrop-blur">
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-white/60">
           Your name
         </label>
@@ -273,7 +285,7 @@ export function Landing() {
         )}
       </div>
 
-      <p className="mt-8 max-w-md text-center text-xs text-white/40">
+      <p className="relative z-10 mt-8 max-w-md text-center text-xs text-white/40">
         Online mode syncs 2 or 4 devices through the FastAPI backend. Solo fills empty seats with bots
         for local practice.
       </p>

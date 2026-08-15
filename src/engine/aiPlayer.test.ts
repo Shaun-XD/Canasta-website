@@ -38,7 +38,7 @@ describe('scoreNewMeld (plus-sum)', () => {
 
 describe('planAiMelds — methodical lays (not dump-everything)', () => {
   it('lays a natural set of 3+ when the rank is still completable', () => {
-    const hand = [c('9', 'hearts'), c('9', 'spades'), c('9', 'clubs'), c('3', 'diamonds')]
+    const hand = [c('K', 'hearts'), c('K', 'spades'), c('K', 'clubs'), c('3', 'diamonds')]
     const { plans, remainingHand } = planAiMelds(hand, 'team-a')
     expect(plans).toHaveLength(1)
     expect(plans[0].kind).toBe('set')
@@ -103,6 +103,14 @@ describe('planAiMelds — methodical lays (not dump-everything)', () => {
     }
     const pick = pickAiDiscard(hand, ctx)
     expect(pick?.rank).toBe('A')
+  })
+
+  it('prefers discarding a stray 4 over a 7 that neighbors an 8 in hand', () => {
+    const seven = c('7', 'hearts')
+    const eight = c('8', 'hearts')
+    const four = c('4', 'clubs')
+    const pick = pickAiDiscard([seven, eight, four])
+    expect(pick?.id).toBe(four.id)
   })
 
   it('prefers an all-natural set over the same set that burns a wild', () => {
@@ -191,6 +199,88 @@ describe('planAiMelds — merge same-rank sets', () => {
   })
 })
 
+describe('planAiMelds — connector ranks and canasta growth', () => {
+  it('does not open a 3-card set of 7s (connectors stay in hand)', () => {
+    const hand = [c('7', 'hearts'), c('7', 'spades'), c('7', 'clubs'), c('3', 'diamonds')]
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a')
+    expect(plans.filter((p) => p.kind === 'set')).toHaveLength(0)
+    expect(remainingHand.filter((card) => card.rank === '7')).toHaveLength(3)
+  })
+
+  it('prefers 7♥-8♥-9♥ over opening a competing set of 8s', () => {
+    const eightH = c('8', 'hearts')
+    const hand = [
+      c('7', 'hearts'),
+      eightH,
+      c('9', 'hearts'),
+      c('8', 'spades'),
+      c('8', 'clubs'),
+    ]
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a')
+    const seq = plans.find((p) => p.kind === 'sequence')
+    expect(seq).toBeTruthy()
+    expect(seq!.cardIds).toContain(eightH.id)
+    expect(plans.filter((p) => p.kind === 'set')).toHaveLength(0)
+    expect(remainingHand.filter((card) => card.rank === '8')).toHaveLength(2)
+  })
+
+  it('does not open a 7-set when a heart run is already on the table', () => {
+    const table = buildSequence(
+      [c('4', 'hearts'), c('5', 'hearts'), c('6', 'hearts')],
+      'team-a',
+    )
+    if (!table.ok) throw new Error('setup')
+    const hand = [c('7', 'spades'), c('7', 'clubs'), c('7', 'diamonds'), c('3', 'clubs')]
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a', [table.meld])
+    expect(plans.filter((p) => p.kind === 'set')).toHaveLength(0)
+    expect(remainingHand.filter((card) => card.rank === '7')).toHaveLength(3)
+  })
+
+  it('allows a set of 8s when five naturals are in hand', () => {
+    const hand = [
+      c('8', 'hearts'),
+      c('8', 'spades'),
+      c('8', 'clubs'),
+      c('8', 'diamonds'),
+      c('8', 'hearts'),
+      c('3', 'clubs'),
+    ]
+    const { plans } = planAiMelds(hand, 'team-a')
+    const eightSet = plans.find((p) => p.kind === 'set')
+    expect(eightSet).toBeTruthy()
+    expect(eightSet!.cardIds).toHaveLength(5)
+  })
+
+  it('allows a 7-set when going out', () => {
+    const hand = [c('7', 'hearts'), c('7', 'spades'), c('7', 'clubs'), c('3', 'diamonds')]
+    const ctx = { ...defaultAiContext('team-a'), mayEmptyForShow: true }
+    const { plans } = planAiMelds(hand, 'team-a', [], ctx)
+    expect(plans.some((p) => p.kind === 'set' && p.cardIds.length === 3)).toBe(true)
+  })
+
+  it('holds a 3-card King set when the table already has two short piles', () => {
+    const shortSet = buildSet([c('4', 'hearts'), c('4', 'spades'), c('4', 'clubs')], 'team-a')
+    const shortRun = buildSequence(
+      [c('5', 'diamonds'), c('6', 'diamonds'), c('7', 'diamonds')],
+      'team-a',
+    )
+    if (!shortSet.ok || !shortRun.ok) throw new Error('setup')
+    const hand = [c('K', 'hearts'), c('K', 'spades'), c('K', 'clubs'), c('3', 'clubs')]
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a', [shortSet.meld, shortRun.meld])
+    expect(plans.filter((p) => p.kind === 'set')).toHaveLength(0)
+    expect(remainingHand.filter((card) => card.rank === 'K')).toHaveLength(3)
+  })
+
+  it('still opens a 7-8-9 sequence seed even when two short piles exist', () => {
+    const shortSet = buildSet([c('4', 'hearts'), c('4', 'spades'), c('4', 'clubs')], 'team-a')
+    const shortKings = buildSet([c('K', 'hearts'), c('K', 'spades'), c('K', 'clubs')], 'team-a')
+    if (!shortSet.ok || !shortKings.ok) throw new Error('setup')
+    const hand = [c('7', 'spades'), c('8', 'spades'), c('9', 'spades'), c('3', 'clubs')]
+    const { plans } = planAiMelds(hand, 'team-a', [shortSet.meld, shortKings.meld])
+    expect(plans.some((p) => p.kind === 'sequence')).toBe(true)
+  })
+})
+
 describe('planAiAppends — feed existing melds', () => {
   it('appends a matching natural onto a team set', () => {
     const built = buildSet([c('7', 'hearts'), c('7', 'spades'), c('7', 'clubs')], 'team-a')
@@ -216,9 +306,27 @@ describe('planAiAppends — feed existing melds', () => {
     expect(plans[0].meldId).toBe(long.meld.id)
   })
 
+  it('prefers appending a connector onto a sequence rather than a set of the same rank', () => {
+    const eightSet = buildSet([c('8', 'spades'), c('8', 'clubs'), c('8', 'diamonds')], 'team-a')
+    const run = buildSequence(
+      [c('5', 'hearts'), c('6', 'hearts'), c('7', 'hearts')],
+      'team-a',
+    )
+    if (!eightSet.ok || !run.ok) throw new Error('setup')
+    const eightH = c('8', 'hearts')
+    const { plans } = planAiAppends(
+      [eightH],
+      [eightSet.meld, run.meld],
+      defaultAiContext('team-a', [eightSet.meld, run.meld]),
+    )
+    expect(plans).toHaveLength(1)
+    expect(plans[0].meldId).toBe(run.meld.id)
+    expect(plans[0].cardId).toBe(eightH.id)
+  })
+
   it('Slides 7♠ into a wild-filled 7 slot instead of spending it on a new set of 7s', () => {
     // 6-★(2)-8-9-10♠ — natural 7♠ should Slide into the wild slot.
-    // Other 7s may still open a set; 7♠ itself must be reserved for the run.
+    // Other 7s must not open a connector set; 7♠ itself is reserved for the run.
     const run = buildSequence(
       [c('6', 'spades'), c('2', 'hearts'), c('8', 'spades'), c('9', 'spades'), c('10', 'spades')],
       'team-a',
@@ -279,16 +387,24 @@ describe('planAiDraw — Top Touch only when plus-sum positive', () => {
   })
 
   it('Top Touches when top discard + hand form a legal set', () => {
-    const a = c('9', 'hearts')
-    const b = c('9', 'spades')
-    const top = c('9', 'clubs')
-    const buried = c('4', 'diamonds')
+    const a = c('4', 'hearts')
+    const b = c('4', 'spades')
+    const top = c('4', 'clubs')
+    const buried = c('K', 'diamonds')
     const plan = planAiDraw([a, b, c('2', 'hearts')], [], [buried, top], 'team-a')
     expect(plan.source).toBe('top-touch')
     expect(plan.kind).toBe('set')
     expect(plan.selectedDiscardIds).toContain(top.id)
     expect(plan.handCardIds).toEqual(expect.arrayContaining([a.id, b.id]))
     expect(plan.score).toBeGreaterThan(0)
+  })
+
+  it('does not Top Touch by manufacturing a 7/8/9 set', () => {
+    const a = c('9', 'hearts')
+    const b = c('9', 'spades')
+    const top = c('9', 'clubs')
+    const plan = planAiDraw([a, b, c('3', 'hearts')], [], [c('4', 'diamonds'), top], 'team-a')
+    expect(plan.source).toBe('stock')
   })
 
   it('Top Touches to append the top card onto an existing meld', () => {
@@ -315,10 +431,10 @@ describe('planAiDraw — Top Touch only when plus-sum positive', () => {
   })
 
   it('every positive Top Touch plan includes the top card in selectedDiscardIds', () => {
-    const a = c('9', 'hearts')
-    const b = c('9', 'spades')
-    const top = c('9', 'clubs')
-    const deep = c('8', 'spades')
+    const a = c('4', 'hearts')
+    const b = c('4', 'spades')
+    const top = c('4', 'clubs')
+    const deep = c('K', 'spades')
     const plan = planAiDraw([a, b], [], [deep, top], 'team-a')
     expect(plan.source).toBe('top-touch')
     expect(aiTopTouchPlaysTopCard([deep, top], plan.selectedDiscardIds)).toBe(true)
@@ -538,7 +654,7 @@ describe('hand floor after Pozzetto', () => {
 
 describe('planAiTurn', () => {
   it('plans meld + discard after a stock draw when no Top Touch is available', () => {
-    const hand = [c('8', 'hearts'), c('8', 'spades'), c('8', 'clubs'), c('3', 'diamonds'), c('4', 'clubs')]
+    const hand = [c('K', 'hearts'), c('K', 'spades'), c('K', 'clubs'), c('3', 'diamonds'), c('4', 'clubs')]
     const turn = planAiTurn(hand, [], [c('A', 'spades')], 'team-a')
     expect(turn.draw.source).toBe('stock')
     expect(turn.newMelds.length).toBeGreaterThanOrEqual(1)
