@@ -1,11 +1,11 @@
 import type { Team, TeamId } from '../types/game'
 import { Card } from './Card'
 
-const POZZETTO_CARD_WIDTH = 52
+const POZZETTO_CARD_WIDTH = 40
 
 /**
- * The two face-down 11-card Pozzetto reserves. Rendered in a side panel
- * (bottom-right); a team's stack unmounts when claimed.
+ * The two face-down 11-card Pozzetto reserves. Rendered top-right under the
+ * table ribbon; a team's stack unmounts when claimed.
  */
 export function PozzettoStacks({
   teams,
@@ -24,7 +24,7 @@ export function PozzettoStacks({
   })
 
   return (
-    <div className="flex items-end gap-3">
+    <div className="flex items-end gap-2">
       {ordered.map((team) => {
         const count = stackCounts[team.id] ?? 0
         const isUs = team.id === localTeamId
@@ -61,7 +61,7 @@ export function PozzettoStacks({
                 —
               </div>
             )}
-            <span className={`text-[10px] font-medium ${isUs ? 'text-emerald-200/80' : 'text-white/45'}`}>
+            <span className={`text-[9px] font-medium ${isUs ? 'text-emerald-200/80' : 'text-white/45'}`}>
               {isUs ? 'Us' : 'Them'}
             </span>
           </div>

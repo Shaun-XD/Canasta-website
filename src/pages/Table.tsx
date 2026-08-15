@@ -364,7 +364,24 @@ export function Table() {
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
+      <div className="relative mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
+        <div className="pointer-events-none absolute right-1.5 top-1 z-30 flex flex-col items-end gap-1 sm:right-3">
+          <div className="pointer-events-auto rounded-lg bg-black/40 px-2 py-1.5 ring-1 ring-white/10 backdrop-blur-sm">
+            <p className="mb-1 text-right text-[8px] font-bold uppercase tracking-[0.14em] text-white/45">
+              Pozzetto
+            </p>
+            <PozzettoStacks
+              teams={room.teams}
+              localTeamId={localTeam?.id}
+              stackCounts={{
+                'team-a': game.pozzettoStacks['team-a']?.length ?? 0,
+                'team-b': game.pozzettoStacks['team-b']?.length ?? 0,
+              }}
+            />
+          </div>
+          <PozzettoActiveStatus teams={room.teams} localTeamId={localTeam?.id} />
+        </div>
+
         {/* NORTH — teammate */}
         <div className="flex shrink-0 justify-center">
           {seating.north && (
@@ -567,7 +584,7 @@ export function Table() {
           )}
         </section>
 
-        {/* SOUTH — hand always centered; avatar/pozzetto overlay sides */}
+        {/* SOUTH — hand always centered; avatar overlays the left */}
         <section className="relative flex w-full shrink-0 justify-center pb-0.5 pt-0">
           <div className="pointer-events-auto absolute bottom-1 left-0 z-20 flex flex-col items-center gap-1 pl-0.5 sm:left-1 sm:pl-0">
             <div className="flex items-center gap-2 rounded-full bg-black/35 px-2.5 py-1.5 ring-1 ring-white/10 backdrop-blur-sm">
@@ -651,22 +668,6 @@ export function Table() {
             </div>
           </div>
 
-          <div className="pointer-events-none absolute bottom-0 right-0 z-20 flex flex-col items-end gap-1.5 sm:right-1">
-            <div className="pointer-events-auto rounded-xl bg-black/40 px-2.5 py-2 ring-1 ring-white/10 backdrop-blur-sm">
-              <p className="mb-1.5 text-right text-[9px] font-bold uppercase tracking-[0.14em] text-white/45">
-                Pozzetto
-              </p>
-              <PozzettoStacks
-                teams={room.teams}
-                localTeamId={localTeam?.id}
-                stackCounts={{
-                  'team-a': game.pozzettoStacks['team-a']?.length ?? 0,
-                  'team-b': game.pozzettoStacks['team-b']?.length ?? 0,
-                }}
-              />
-            </div>
-            <PozzettoActiveStatus teams={room.teams} localTeamId={localTeam?.id} />
-          </div>
         </section>
       </div>
 
