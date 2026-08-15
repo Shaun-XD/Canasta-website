@@ -433,3 +433,41 @@ describe('mock/bot turn pacing', () => {
     expect(useGameStore.getState().game!.turn.activePlayerId).toBe(localId)
   })
 })
+
+describe('local stock draw', () => {
+  beforeEach(() => {
+    useGameStore.setState({
+      room: null,
+      game: null,
+      localPlayerId: null,
+      playMode: 'solo',
+      selectedCardIds: [],
+      selectedMeldId: null,
+      topTouchInProgress: false,
+      selectedDiscardIds: [],
+      lastActionError: null,
+    })
+  })
+
+  it('adds one card to the hand and sets phase to action', () => {
+    const { actions } = useGameStore.getState()
+    actions.createRoom('Tester')
+    actions.toggleReady()
+    actions.startGame()
+
+    const before = useGameStore.getState()
+    const localId = before.localPlayerId!
+    const handLen = before.game!.hands[localId].length
+    const stockLen = before.game!.stock.length
+    expect(before.game!.turn.phase).toBe('draw')
+    expect(before.game!.turn.activePlayerId).toBe(localId)
+
+    actions.drawFromStock()
+
+    const after = useGameStore.getState()
+    expect(after.game!.hands[localId].length).toBe(handLen + 1)
+    expect(after.game!.stock.length).toBe(stockLen - 1)
+    expect(after.game!.turn.phase).toBe('action')
+    expect(after.game!.turn.hasDrawnThisTurn).toBe(true)
+  })
+})

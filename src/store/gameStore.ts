@@ -80,6 +80,11 @@ const EMPTY_SELECTION = {
   selectedDiscardIds: [] as string[],
 }
 
+/**
+ * Lobby / table-meta only (ready, start, pause, new game). Never use this
+ * for draw / meld / discard — waiting on the ack races `game:state` and
+ * drops the card from the UI.
+ */
 async function runOnlineAction(
   get: () => GameStoreState,
   set: (partial: Partial<GameStoreState>) => void,
@@ -89,8 +94,7 @@ async function runOnlineAction(
   try {
     let ack = await run()
     // Only re-bind + retry when the socket lost its room mapping. Never retry
-    // on timeout — the action may already have succeeded (e.g. stock draw),
-    // and a second draw fails with "Already drew this turn".
+    // on timeout — the action may already have succeeded on the server.
     if (!ack.ok && shouldRetryOnlineAction(ack.error)) {
       const rejoined = await get().actions.rejoinOnlineSession()
       if (rejoined) ack = await run()
@@ -99,8 +103,6 @@ async function runOnlineAction(
       set({ lastActionError: ack.error || failMessage })
       return false
     }
-    // Prefer the ack payload so stock draw (and other actions) update even if
-    // the async lobby broadcast is delayed or the ack races ahead of it.
     if (ack.game !== undefined || ack.room) {
       applyOnlineSnapshot({
         set,
@@ -114,6 +116,33 @@ async function runOnlineAction(
   } catch (err) {
     set({ lastActionError: err instanceof Error ? err.message : failMessage })
     return false
+  }
+}
+
+/** Blocks a second stock click while the broadcast is in flight. */
+let onlineDrawInFlight = false
+let onlineDrawInFlightTimer: ReturnType<typeof setTimeout> | null = null
+
+function beginOnlineDraw(): void {
+  onlineDrawInFlight = true
+  if (onlineDrawInFlightTimer != null) clearTimeout(onlineDrawInFlightTimer)
+  onlineDrawInFlightTimer = setTimeout(() => {
+    onlineDrawInFlight = false
+    onlineDrawInFlightTimer = null
+  }, 8000)
+}
+
+function endOnlineDraw(): void {
+  onlineDrawInFlight = false
+  if (onlineDrawInFlightTimer != null) {
+    clearTimeout(onlineDrawInFlightTimer)
+    onlineDrawInFlightTimer = null
+  }
+}
+
+function settleOnlineDraw(game: GameState | null | undefined): void {
+  if (!game || game.turn.phase !== 'draw' || game.turn.hasDrawnThisTurn) {
+    endOnlineDraw()
   }
 }
 
@@ -171,6 +200,7 @@ function applyOnlineSnapshot(opts: {
 
   const game = opts.game
   if (!game) {
+    endOnlineDraw()
     set({
       ...(room ? { room } : {}),
       game: null,
@@ -188,6 +218,7 @@ function applyOnlineSnapshot(opts: {
       localPlayerId: localId,
     })
   ) {
+    settleOnlineDraw(game)
     if (room && room !== prev.room) {
       set({ room, playMode: 'online', ...(playerId ? { localPlayerId: playerId } : {}) })
     }
@@ -236,6 +267,7 @@ function applyOnlineSnapshot(opts: {
 
   const prunedSelected = turnChanged ? [] : prev.selectedCardIds.filter((id) => handIds.has(id))
   const clearTopTouch = turnChanged || game.turn.phase !== 'draw'
+  settleOnlineDraw(game)
 
   set({
     ...(room ? { room } : {}),
@@ -471,7 +503,10 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
     onGameState: (game, playerId) => {
       applyOnlineSnapshot({ set, get, game, playerId })
     },
-    onActionError: (error) => set({ lastActionError: error }),
+    onActionError: (error) => {
+      endOnlineDraw()
+      set({ lastActionError: error })
+    },
     // After a socket reconnect the server loses CLIENTS[sid] — rebind via rejoin.
     onReconnect: () => {
       void get().actions.rejoinOnlineSession()
@@ -1044,18 +1079,10 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'draw') return
       if (game.stock.length === 0) return
       if (playMode === 'online') {
-        void (async () => {
-          set({ lastActionError: null })
-          const ok = await runOnlineAction(get, set, () => socketDraw(), 'Could not draw from stock.')
-          if (!ok) {
-            const live = get().game
-            // Broadcast often applies the draw before the ack. Don't surface a
-            // timeout / empty-ack as a failed pickup, and never retry draw.
-            if (live?.turn.hasDrawnThisTurn && live.turn.phase !== 'draw') {
-              set({ lastActionError: null })
-            }
-          }
-        })()
+        if (onlineDrawInFlight) return
+        beginOnlineDraw()
+        set({ lastActionError: null })
+        socketDraw()
         return
       }
 
@@ -1143,22 +1170,12 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
               ? selectedDiscardIds.filter((id) => game.discardPile.cards.some((c) => c.id === id))
               : [topCard.id]
             : []
-        void (async () => {
-          set({ lastActionError: null })
-          const ok = await runOnlineAction(
-            get,
-            set,
-            () =>
-              socketAttemptMeld({
-                handCardIds: validSelected,
-                targetMeldId: selectedMeldId,
-                selectedDiscardIds: meldDiscardIds,
-              }),
-            'Could not meld.',
-          )
-          if (!ok) return
-          set({ ...EMPTY_SELECTION })
-        })()
+        set({ lastActionError: null })
+        socketAttemptMeld({
+          handCardIds: validSelected,
+          targetMeldId: selectedMeldId,
+          selectedDiscardIds: meldDiscardIds,
+        })
         return
       }
 
@@ -1350,7 +1367,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
       if (playMode === 'online') {
-        void runOnlineAction(get, set, () => socketMoveWild(meldId), 'Could not move wild.')
+        set({ lastActionError: null })
+        socketMoveWild(meldId)
         return
       }
       const team = findTeamForPlayer(room, localPlayerId)
@@ -1380,20 +1398,12 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const validSelected = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
       if (!team || !meld || validSelected.length !== 1) return
       if (playMode === 'online') {
-        void (async () => {
-          const ok = await runOnlineAction(
-            get,
-            set,
-            () =>
-              socketResolveSlide({
-                edge,
-                handCardIds: validSelected,
-                targetMeldId: meld.id,
-              }),
-            'Could not resolve slide.',
-          )
-          if (ok) set({ ...EMPTY_SELECTION })
-        })()
+        set({ lastActionError: null })
+        socketResolveSlide({
+          edge,
+          handCardIds: validSelected,
+          targetMeldId: meld.id,
+        })
         return
       }
 
@@ -1453,11 +1463,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       }
       const cardId = validSelected[0]
       if (playMode === 'online') {
-        void (async () => {
-          set({ lastActionError: null })
-          const ok = await runOnlineAction(get, set, () => socketDiscard(cardId), 'Could not discard.')
-          if (ok) set({ ...EMPTY_SELECTION })
-        })()
+        set({ lastActionError: null })
+        socketDiscard(cardId)
         return
       }
 
@@ -1520,27 +1527,19 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'action') return
       if (playMode === 'online') {
-        void (async () => {
-          const hand = get().game?.hands[localPlayerId] ?? []
-          const valid = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
-          if (hand.length === 1) {
-            if (valid.length !== 1) {
-              set({ lastActionError: 'Select your final card to discard and declare Show.' })
-              return
-            }
-            // Last-card discard auto-Shows on the server when eligible.
-            const ok = await runOnlineAction(
-              get,
-              set,
-              () => socketDiscard(valid[0]),
-              'Could not discard the final card.',
-            )
-            if (ok) set({ ...EMPTY_SELECTION })
+        const hand = game.hands[localPlayerId] ?? []
+        const valid = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
+        if (hand.length === 1) {
+          if (valid.length !== 1) {
+            set({ lastActionError: 'Select your final card to discard and declare Show.' })
             return
           }
-          const ok = await runOnlineAction(get, set, () => socketDeclareShow(), 'Could not declare Show.')
-          if (ok) set({ ...EMPTY_SELECTION })
-        })()
+          set({ lastActionError: null })
+          socketDiscard(valid[0])
+          return
+        }
+        set({ lastActionError: null })
+        socketDeclareShow()
         return
       }
       const team = findTeamForPlayer(room, localPlayerId)
@@ -1590,7 +1589,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!room || !game) return
       if (game.stock.length !== 0) return
       if (playMode === 'online') {
-        void runOnlineAction(get, set, () => socketForceSuddenDeath(), 'Could not end the round.')
+        set({ lastActionError: null })
+        socketForceSuddenDeath()
         return
       }
       const { room: scoredRoom, game: scoredGame } = endRoundWithScore(room, game, 'sudden-death', null)
@@ -1614,7 +1614,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (game.turn.activePlayerId !== localPlayerId) return
       if (room.status !== 'in-progress') return
       if (playMode === 'online') {
-        void runOnlineAction(get, set, () => socketAutoEndTurn(), 'Could not auto-end the turn.')
+        set({ lastActionError: null })
+        socketAutoEndTurn()
         return
       }
       const team = findTeamForPlayer(room, localPlayerId)

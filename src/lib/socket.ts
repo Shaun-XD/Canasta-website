@@ -168,45 +168,55 @@ export async function socketStartGame(): Promise<RoomAck> {
   return emitAck('room:start')
 }
 
-export async function socketDraw(): Promise<RoomAck> {
-  return emitAck('game:draw')
+/**
+ * Table card actions are fire-and-forget. python-socketio acks are often
+ * lost, and waiting on them (emitAck) races `game:state` — that is what
+ * dropped stock draws after the lobby-ack work was copied onto the table.
+ * UI updates come from the `game:state` broadcast → applyOnlineSnapshot.
+ */
+function emitTableAction(event: string, payload?: unknown): void {
+  connectSocket().emit(event, payload ?? {})
 }
 
-export async function socketAttemptMeld(payload: {
+export function socketDraw(): void {
+  emitTableAction('game:draw')
+}
+
+export function socketAttemptMeld(payload: {
   handCardIds: string[]
   targetMeldId?: string | null
   selectedDiscardIds?: string[]
   slideEdge?: 'top' | 'bottom'
-}): Promise<RoomAck> {
-  return emitAck('game:attemptMeld', payload)
+}): void {
+  emitTableAction('game:attemptMeld', payload)
 }
 
-export async function socketResolveSlide(payload: {
+export function socketResolveSlide(payload: {
   edge: 'top' | 'bottom'
   handCardIds: string[]
   targetMeldId: string
-}): Promise<RoomAck> {
-  return emitAck('game:resolveSlide', payload)
+}): void {
+  emitTableAction('game:resolveSlide', payload)
 }
 
-export async function socketDiscard(cardId: string): Promise<RoomAck> {
-  return emitAck('game:discard', { cardId })
+export function socketDiscard(cardId: string): void {
+  emitTableAction('game:discard', { cardId })
 }
 
-export function socketMoveWild(meldId: string): Promise<RoomAck> {
-  return emitAck('game:moveWild', { meldId })
+export function socketMoveWild(meldId: string): void {
+  emitTableAction('game:moveWild', { meldId })
 }
 
-export function socketDeclareShow(): Promise<RoomAck> {
-  return emitAck('game:declareShow')
+export function socketDeclareShow(): void {
+  emitTableAction('game:declareShow')
 }
 
-export function socketForceSuddenDeath(): Promise<RoomAck> {
-  return emitAck('game:forceSuddenDeath')
+export function socketForceSuddenDeath(): void {
+  emitTableAction('game:forceSuddenDeath')
 }
 
-export function socketAutoEndTurn(): Promise<RoomAck> {
-  return emitAck('game:autoEndTurn')
+export function socketAutoEndTurn(): void {
+  emitTableAction('game:autoEndTurn')
 }
 
 export async function socketTogglePause(): Promise<RoomAck> {
