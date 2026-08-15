@@ -60,7 +60,7 @@ export interface Player {
   seat: number // 0-3, clockwise seating position
   isReady: boolean
   isLocal: boolean
-  isMock: boolean // true for placeholder/AI-ish players used to demo the UI solo
+  isMock: boolean // true for AI bots (solo seats, or online “Fill bots”)
   connectionStatus: ConnectionStatus
   avatarColor: string
 }

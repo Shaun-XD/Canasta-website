@@ -27,6 +27,13 @@ import type {
   TeamId,
 } from '../../src/types/game.ts'
 import { DEFAULT_TARGET_SCORE, meldCards, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam } from '../../src/types/game.ts'
+import {
+  fillLobbyBots,
+  removeLobbyBots,
+  resizeLobbyCapacity,
+  switchTeamAllowingBotSwap,
+} from '../../src/engine/lobbyBots.ts'
+import { playBotsUntilHuman } from '../../src/engine/applyBotTurn.ts'
 
 const HAND_SIZE = 13
 const POZZETTO_SIZE = 11
@@ -246,6 +253,13 @@ function requirePlayer(session: Session, playerId: string): Player {
   return player
 }
 
+function applyBots(session: Session): void {
+  if (!session.game) return
+  const next = playBotsUntilHuman(session.room, session.game)
+  session.room = next.room
+  session.game = next.game
+}
+
 // ===== RPC methods =====
 
 function create_room(params: {
@@ -293,13 +307,31 @@ function join_room(params: { roomId: string; playerName: string }): {
   const session = requireSession(params.roomId)
   if (session.room.status !== 'lobby') throw new Error('Game already started.')
   const maxPlayers = normalizeMaxPlayers(session.room.maxPlayers)
+  const playerId = randomId('p')
+  const replaceBot = session.room.players.find((p) => p.isMock)
+
   if (session.room.players.length >= maxPlayers) {
-    throw new Error(
-      `This lobby is set to ${maxPlayers} players and is full.`,
-    )
+    if (!replaceBot) {
+      throw new Error(`This lobby is set to ${maxPlayers} players and is full.`)
+    }
+    const player: Player = {
+      id: playerId,
+      name: (params.playerName || 'Player').slice(0, 24),
+      teamId: replaceBot.teamId,
+      seat: replaceBot.seat,
+      isReady: false,
+      isLocal: false,
+      isMock: false,
+      connectionStatus: 'connected',
+      avatarColor: AVATAR_COLORS[session.room.players.length % AVATAR_COLORS.length],
+    }
+    session.room = rebuildTeamPlayerIds({
+      ...session.room,
+      players: session.room.players.map((p) => (p.id === replaceBot.id ? player : p)),
+    })
+    return { roomId: session.room.roomId, playerId, room: session.room, game: session.game }
   }
 
-  const playerId = randomId('p')
   const usedSeats = new Set(session.room.players.map((p) => p.seat))
   let seat = 0
   while (usedSeats.has(seat) && seat < maxPlayers) seat += 1
@@ -364,19 +396,8 @@ function set_team(params: { roomId: string; playerId: string; teamId: TeamId }):
   game: GameState | null
 } {
   const session = requireSession(params.roomId)
-  if (session.room.status !== 'lobby') throw new Error('Cannot change team after start.')
   requirePlayer(session, params.playerId)
-  const perTeam = seatsPerTeam(normalizeMaxPlayers(session.room.maxPlayers))
-  const count = session.room.players.filter(
-    (p) => p.teamId === params.teamId && p.id !== params.playerId,
-  ).length
-  if (count >= perTeam) throw new Error('That team is full.')
-  session.room = rebuildTeamPlayerIds({
-    ...session.room,
-    players: session.room.players.map((p) =>
-      p.id === params.playerId ? { ...p, teamId: params.teamId } : p,
-    ),
-  })
+  session.room = switchTeamAllowingBotSwap(session.room, params.playerId, params.teamId)
   return { room: session.room, game: session.game }
 }
 
@@ -447,15 +468,28 @@ function set_max_players(params: { roomId: string; playerId: string; maxPlayers:
   game: GameState | null
 } {
   const session = requireSession(params.roomId)
-  if (session.room.status !== 'lobby') throw new Error('Cannot change player count after the game starts.')
   if (session.room.hostPlayerId !== params.playerId) throw new Error('Only the host can change the player count.')
-  const capacity = normalizeMaxPlayers(params.maxPlayers)
-  if (session.room.players.length > capacity) {
-    throw new Error(
-      `Cannot set ${capacity}-player lobby — ${session.room.players.length} players already joined.`,
-    )
-  }
-  session.room = { ...session.room, maxPlayers: capacity }
+  session.room = resizeLobbyCapacity(session.room, normalizeMaxPlayers(params.maxPlayers))
+  return { room: session.room, game: session.game }
+}
+
+function fill_bots(params: { roomId: string; playerId: string }): {
+  room: RoomState
+  game: GameState | null
+} {
+  const session = requireSession(params.roomId)
+  requirePlayer(session, params.playerId)
+  session.room = fillLobbyBots(session.room)
+  return { room: session.room, game: session.game }
+}
+
+function remove_bots(params: { roomId: string; playerId: string }): {
+  room: RoomState
+  game: GameState | null
+} {
+  const session = requireSession(params.roomId)
+  requirePlayer(session, params.playerId)
+  session.room = removeLobbyBots(session.room)
   return { room: session.room, game: session.game }
 }
 
@@ -493,7 +527,8 @@ function start_game(params: { roomId: string; playerId: string }): {
   const game = dealNewRound(room, 1)
   session.room = room
   session.game = game
-  return { room, game }
+  applyBots(session)
+  return { room: session.room, game: session.game! }
 }
 
 function draw(params: { roomId: string; playerId: string }): { room: RoomState; game: GameState } {
@@ -707,7 +742,8 @@ function discard(params: { roomId: string; playerId: string; cardId: string }): 
   game = { ...game, turn: advanceTurn(game, room, params.playerId), pendingSlide: null }
   session.room = room
   session.game = game
-  return { room, game }
+  applyBots(session)
+  return { room: session.room, game: session.game! }
 }
 
 function move_wild(params: { roomId: string; playerId: string; meldId: string }): {
@@ -774,7 +810,8 @@ function auto_end_turn(params: { roomId: string; playerId: string }): {
   const hand = game.hands[params.playerId] ?? []
   if (hand.length === 0) {
     session.game = { ...game, turn: advanceTurn(game, session.room, params.playerId) }
-    return { room: session.room, game: session.game }
+    applyBots(session)
+    return { room: session.room, game: session.game! }
   }
   // Ensure drawn so discard is legal.
   if (!game.turn.hasDrawnThisTurn && game.stock.length > 0) {
@@ -787,7 +824,8 @@ function auto_end_turn(params: { roomId: string; playerId: string }): {
       ...session.game!,
       turn: advanceTurn(session.game!, session.room, params.playerId),
     }
-    return { room: session.room, game: session.game }
+    applyBots(session)
+    return { room: session.room, game: session.game! }
   }
   return discard({ roomId: params.roomId, playerId: params.playerId, cardId })
 }
@@ -817,6 +855,7 @@ function toggle_pause(params: { roomId: string; playerId: string }): {
     }
   }
   void params.playerId
+  if (!session.game.turn.isPaused) applyBots(session)
   return { room: session.room, game: session.game }
 }
 
@@ -840,7 +879,8 @@ function start_new_game(params: { roomId: string; playerId: string }): {
   const game = dealNewRound(room, 1)
   session.room = room
   session.game = game
-  return { room, game }
+  applyBots(session)
+  return { room: session.room, game: session.game! }
 }
 
 function next_round(params: { roomId: string; playerId: string }): {
@@ -868,7 +908,8 @@ function next_round(params: { roomId: string; playerId: string }): {
   void params.playerId
   session.room = room
   session.game = game
-  return { room, game }
+  applyBots(session)
+  return { room: session.room, game: session.game! }
 }
 
 function return_to_lobby(params: { roomId: string; playerId: string }): {
@@ -880,7 +921,7 @@ function return_to_lobby(params: { roomId: string; playerId: string }): {
   session.room = {
     ...session.room,
     status: 'lobby',
-    players: session.room.players.map((p) => ({ ...p, isReady: false })),
+    players: session.room.players.map((p) => ({ ...p, isReady: !!p.isMock })),
     teams: session.room.teams.map((t) => ({
       ...t,
       melds: [],
@@ -907,6 +948,8 @@ const METHODS: Record<string, (params: any) => unknown> = {
   set_ready,
   set_timer,
   set_max_players,
+  fill_bots,
+  remove_bots,
   set_target,
   start_game,
   draw,

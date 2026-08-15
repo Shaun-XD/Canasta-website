@@ -308,6 +308,16 @@ async def room_set_max_players(sid, data):
     return await _player_action(sid, "set_max_players", {"maxPlayers": (data or {}).get("maxPlayers", 4)})
 
 
+@sio.on("room:fillBots")
+async def room_fill_bots(sid, data):
+    return await _player_action(sid, "fill_bots")
+
+
+@sio.on("room:removeBots")
+async def room_remove_bots(sid, data):
+    return await _player_action(sid, "remove_bots")
+
+
 @sio.on("room:setTarget")
 async def room_set_target(sid, data):
     return await _player_action(sid, "set_target", {"score": (data or {}).get("score", 2100)})

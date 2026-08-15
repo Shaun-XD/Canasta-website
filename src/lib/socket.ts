@@ -160,6 +160,14 @@ export function socketSetMaxPlayers(maxPlayers: number): Promise<RoomAck> {
   return emitAck('room:setMaxPlayers', { maxPlayers })
 }
 
+export function socketFillBots(): Promise<RoomAck> {
+  return emitAck('room:fillBots')
+}
+
+export function socketRemoveBots(): Promise<RoomAck> {
+  return emitAck('room:removeBots')
+}
+
 export function socketSetTarget(score: number): Promise<RoomAck> {
   return emitAck('room:setTarget', { score })
 }

@@ -8,10 +8,11 @@ import type {
   Team,
   TeamId,
 } from '../types/game'
-import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, normalizeTurnTimerSeconds, normalizeMaxPlayers, seatsPerTeam, type MaxPlayers } from '../types/game'
+import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, normalizeTurnTimerSeconds, normalizeMaxPlayers, type MaxPlayers } from '../types/game'
 import { buildShuffledDeck, dealHands, sortHand } from '../lib/deck'
 import { seedRemotePlayerFlights } from '../lib/seedRemoteFlights'
 import { shouldRetryOnlineAction, shouldSkipOnlineSnapshot } from './onlineInvariants'
+import { fillLobbyBots, removeLobbyBots, switchTeamAllowingBotSwap } from '../engine/lobbyBots'
 import { initialPozzettoState, shouldClaimPozzettoOnDiscard, shouldClaimPozzettoOnMeldEmpty } from '../engine/pozzetto'
 import { evaluateShowEligibility } from '../engine/showEligibility'
 import { EMPTY_HAND_FOUL_PENALTY, isIllegalEmptyHand } from '../engine/emptyHandFoul'
@@ -60,6 +61,8 @@ import {
   socketRejoinRoom,
   socketSetReady,
   socketSetMaxPlayers,
+  socketFillBots,
+  socketRemoveBots,
   socketSetTarget,
   socketSetTeam,
   socketSetTimer,
@@ -429,6 +432,10 @@ interface GameStoreState {
     setTurnTimerSeconds: (seconds: number) => void
     /** Host: set lobby size to 2 (1v1) or 4 (2v2). */
     setMaxPlayers: (maxPlayers: MaxPlayers) => void
+    /** Fill empty lobby seats with ready bots (online + solo). */
+    fillBots: () => void
+    /** Remove lobby bots so humans can reclaim seats. */
+    removeBots: () => void
     startGame: () => void
     toggleSelectCard: (cardId: string) => void
     clearSelection: () => void
@@ -869,14 +876,11 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         void runOnlineAction(get, set, () => socketSetTeam(teamId), 'Could not switch teams.')
         return
       }
-      const perTeam = seatsPerTeam(normalizeMaxPlayers(room.maxPlayers))
-      const count = room.players.filter((p) => p.teamId === teamId && p.id !== localPlayerId).length
-      if (count >= perTeam) {
-        set({ lastActionError: 'That team is full.' })
-        return
+      try {
+        set({ room: switchTeamAllowingBotSwap(room, localPlayerId, teamId), lastActionError: null })
+      } catch (err) {
+        set({ lastActionError: err instanceof Error ? err.message : 'Could not switch teams.' })
       }
-      const players = room.players.map((p) => (p.id === localPlayerId ? { ...p, teamId } : p))
-      set({ room: { ...room, players, teams: makeTeams(players) }, lastActionError: null })
     },
 
     setLocalSeat: (seat: number) => {
@@ -1011,6 +1015,34 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         },
         lastActionError: null,
       })
+    },
+
+    fillBots: () => {
+      const { room, playMode } = get()
+      if (!room || room.status !== 'lobby') return
+      if (playMode === 'online') {
+        void runOnlineAction(get, set, () => socketFillBots(), 'Could not fill bots.')
+        return
+      }
+      try {
+        set({ room: fillLobbyBots(room), lastActionError: null })
+      } catch (err) {
+        set({ lastActionError: err instanceof Error ? err.message : 'Could not fill bots.' })
+      }
+    },
+
+    removeBots: () => {
+      const { room, playMode } = get()
+      if (!room || room.status !== 'lobby') return
+      if (playMode === 'online') {
+        void runOnlineAction(get, set, () => socketRemoveBots(), 'Could not remove bots.')
+        return
+      }
+      try {
+        set({ room: removeLobbyBots(room), lastActionError: null })
+      } catch (err) {
+        set({ lastActionError: err instanceof Error ? err.message : 'Could not remove bots.' })
+      }
     },
 
     startGame: () => {

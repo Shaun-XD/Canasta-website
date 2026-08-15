@@ -18,6 +18,8 @@ export function Lobby() {
     startGame,
     setTurnTimerSeconds,
     setMaxPlayers,
+    fillBots,
+    removeBots,
     exitToHome,
     rejoinOnlineSession,
   } = useGameStore((s) => s.actions)
@@ -67,6 +69,8 @@ export function Lobby() {
   const canStart = allReady && teamsBalanced
   const isHost = localPlayer?.id === room.hostPlayerId
   const humans = room.players.filter((p) => !p.isMock).length
+  const botCount = room.players.filter((p) => p.isMock).length
+  const openSeats = Math.max(0, capacity - room.players.length)
   const noTimer = room.turnTimerSeconds === 0
   const readyCount = room.players.filter((p) => p.isReady).length
 
@@ -139,7 +143,31 @@ export function Lobby() {
                 {capacity === 2 ? '2-player (1v1)' : '4-player (2v2)'}
               </span>
             )}
+            {openSeats > 0 && (
+              <button
+                type="button"
+                onClick={fillBots}
+                className="rounded-md border border-yellow-300/50 bg-yellow-400/15 px-2.5 py-1 text-[11px] font-semibold text-yellow-100 transition hover:bg-yellow-400/25"
+              >
+                Fill bots ({openSeats})
+              </button>
+            )}
+            {botCount > 0 && (
+              <button
+                type="button"
+                onClick={removeBots}
+                className="rounded-md border border-white/20 bg-white/5 px-2.5 py-1 text-[11px] font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+              >
+                Remove bots
+              </button>
+            )}
           </div>
+          {openSeats > 0 && (
+            <p className="max-w-md text-[11px] text-white/40">
+              Fill empty seats with bots. You can still use “Switch here” onto a bot’s team — the
+              bot takes your old seat.
+            </p>
+          )}
 
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-white/50">
             <span>Turn timer:</span>
@@ -203,6 +231,9 @@ export function Lobby() {
                     <div className="flex-1">
                       <p className="text-sm font-semibold">
                         {p.name} {p.isLocal && <span className="text-yellow-300">(you)</span>}
+                        {p.isMock && (
+                          <span className="ml-1 text-[10px] font-medium text-sky-300/80">bot</span>
+                        )}
                         {p.id === room.hostPlayerId && (
                           <span className="ml-1 text-[10px] font-medium text-white/40">host</span>
                         )}
@@ -265,7 +296,8 @@ export function Lobby() {
           </button>
           {playMode === 'online' && (
             <p className="text-center text-xs text-white/45">
-              Online lobby · {humans}/{capacity} humans joined ·{' '}
+              Online lobby · {humans}/{capacity} humans
+              {botCount > 0 ? ` · ${botCount} bot${botCount === 1 ? '' : 's'}` : ''} ·{' '}
               {capacity === 2 ? '1v1' : '2v2'} · share code{' '}
               <span className="font-semibold text-yellow-300/90">{room.roomId}</span>
               {!isHost && localPlayer && (
