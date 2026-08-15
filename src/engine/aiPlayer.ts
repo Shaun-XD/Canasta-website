@@ -89,13 +89,12 @@ export const AI_WEIGHTS = {
   /** Penalty for discarding a card that was part of a near-meld (2-of-kind / 2-run). */
   breakNearMeld: 45,
   /** Discarding a card that opponents can use immediately (public melds). */
-  feedOpponent: 160,
+  feedOpponent: 480,
   /**
-   * Softer feed cost when we still hold 2+ of a hopeless rank and the enemy
-   * set is still far from canasta (≤4). Emergency discard fodder — not a gift
-   * when they are one card away.
+   * Softer feed cost only when the rank is already hopeless for us and we
+   * still hold 2+ copies. Direct feeds of live ranks stay at feedOpponent.
    */
-  feedOpponentSoft: 55,
+  feedOpponentSoft: 70,
   /** Discarding a card that would feed our own/teammate public melds. */
   feedTeammate: 70,
   /** Near-future feed for opponents (one rank off a sequence edge). */
@@ -1195,17 +1194,9 @@ export function opponentFeedDiscardPenalty(
   if (!cardFeedsAnyMeld(card, ctx.opponentMelds)) {
     return cardNearFutureFeeds(card, ctx.opponentMelds) ? AI_WEIGHTS.feedOpponentNear : 0
   }
-
   const handCopies = hand.filter((c) => c.rank === card.rank && !isWild(c)).length
   const hopeless = isHopelessNewSetRank(card.rank, handCopies, ctx)
-  let worstEnemyLen = 0
-  for (const meld of ctx.opponentMelds) {
-    if (!canAppendToMeld(meld, card)) continue
-    worstEnemyLen = Math.max(worstEnemyLen, meld.slots.length)
-  }
-
-  if (worstEnemyLen >= 5) return AI_WEIGHTS.feedOpponent
-  if (hopeless && handCopies >= 2 && worstEnemyLen <= 4) return AI_WEIGHTS.feedOpponentSoft
+  if (hopeless && handCopies >= 2) return AI_WEIGHTS.feedOpponentSoft
   return AI_WEIGHTS.feedOpponent
 }
 

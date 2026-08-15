@@ -70,6 +70,20 @@ describe('shouldSkipOnlineSnapshot', () => {
     expect(shouldSkipOnlineSnapshot({ prevGame: prev, nextGame: prev, localPlayerId: 'p1' })).toBe(true)
   })
 
+  it('does not skip when a wild-slide prompt appears (same lastPlay)', () => {
+    const prev = game({
+      stock: [{ id: 's1', rank: '4', suit: 'clubs' }],
+      hands: { p1: [{ id: 'c1', rank: '6', suit: 'diamonds' }] },
+      lastPlay: play,
+      pendingSlide: null,
+    })
+    const next = {
+      ...prev,
+      pendingSlide: { teamId: 'team-a' as const, meldId: 'm1', displacedWildCardId: 'w1' },
+    }
+    expect(shouldSkipOnlineSnapshot({ prevGame: prev, nextGame: next, localPlayerId: 'p1' })).toBe(false)
+  })
+
   it('does not skip when lastPlay is missing (guest fallback path)', () => {
     const prev = game({ stock: [{ id: 's1', rank: '4', suit: 'clubs' }], hands: { p1: [] } })
     const next = { ...prev, stock: [] as GameState['stock'] }

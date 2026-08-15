@@ -555,7 +555,8 @@ export function Table() {
           {topTouchInProgress && (
             <div className="mx-auto flex w-full max-w-lg flex-col items-center gap-1.5 rounded-xl bg-amber-400/10 px-2.5 py-2 ring-1 ring-amber-300/30">
               <p className="text-center text-[11px] font-medium leading-relaxed text-amber-100">
-                Top Touch — select hand / discard cards / a meld, then Meld.
+                Top Touch — only the top card starts selected. Tap extra pile cards to include
+                them in the meld. The rest of the pile still comes to your hand.
               </p>
               <button type="button" onClick={cancelTopTouch} className="action-btn action-btn-ghost !min-h-8 !text-[11px]">
                 Cancel Top Touch
@@ -672,18 +673,18 @@ export function Table() {
       </div>
 
       {game.pendingSlide && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-emerald-950 p-6 text-center shadow-2xl">
-            <h3 className="text-lg font-bold text-white">Slide the displaced wild card</h3>
-            <p className="mt-1 text-sm text-white/60">
-              Your natural card fills the wild&apos;s slot. Move the wild up or down in the meld column.
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-yellow-300/40 bg-emerald-950 p-6 text-center shadow-2xl ring-1 ring-white/10">
+            <h3 className="text-lg font-bold text-white">Replace the wild — choose an edge</h3>
+            <p className="mt-2 text-sm leading-relaxed text-white/70">
+              Your natural card takes the Joker/2&apos;s place. Where should the wild slide to?
             </p>
-            <div className="mt-4 flex justify-center gap-3">
+            <div className="mt-5 flex justify-center gap-3">
               <button type="button" onClick={() => resolveSlide('top')} className="action-btn action-btn-gold flex-1">
-                Move up
+                Top edge
               </button>
               <button type="button" onClick={() => resolveSlide('bottom')} className="action-btn action-btn-ghost flex-1">
-                Move down
+                Bottom edge
               </button>
             </div>
           </div>

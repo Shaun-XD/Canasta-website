@@ -271,17 +271,27 @@ export function attemptMeldAction(params: MeldActionParams): MeldActionResult {
     let working = meld
     // Limpa exception uses hand size before each append (1 = last card).
     let handSize = hand.length
-    for (const card of candidateCards) {
-      const result = appendToMeld(working, card, effectiveSlideEdge, { team, handSize })
-      if (!result.ok) {
+    // Append in any order so 8 then 9 (or 9 then 8) can both land on a canasta.
+    const pending = [...candidateCards]
+    while (pending.length > 0) {
+      let progressed = false
+      let lastError = 'Those cards cannot all be added to this meld.'
+      for (let i = 0; i < pending.length; i += 1) {
+        const card = pending[i]
+        const result = appendToMeld(working, card, effectiveSlideEdge, { team, handSize })
+        if (result.ok) {
+          working = result.meld
+          if (selectedHandCardIds.includes(card.id)) handSize -= 1
+          pending.splice(i, 1)
+          progressed = true
+          break
+        }
         if (result.needsSlideChoice && !autoResolveSlide) {
           return { ok: false, error: result.error, needsSlideChoice: result.needsSlideChoice }
         }
-        return { ok: false, error: result.error }
+        lastError = result.error
       }
-      working = result.meld
-      // Hand cards reduce handSize; Top Touch discard cards do not.
-      if (selectedHandCardIds.includes(card.id)) handSize -= 1
+      if (!progressed) return { ok: false, error: lastError }
     }
     return { ok: true, kind: 'append', hand: remainingHand, meld: working, usedDiscardCards: topTouchCards }
   }

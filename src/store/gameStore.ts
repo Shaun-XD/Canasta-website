@@ -1326,7 +1326,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
                 displacedWildCardId: result.needsSlideChoice.displacedWildCardId,
               },
             },
-            lastActionError: result.error,
+            lastActionError: null,
           })
           return
         }

@@ -22,6 +22,19 @@ export function rebuildLobbyTeams(room: RoomState): RoomState {
   }
 }
 
+/** Seat A/B/A/B so partners sit opposite and turn order alternates. */
+export function seatPlayersAlternating(players: Player[]): Player[] {
+  const teamA = players.filter((p) => p.teamId === 'team-a').sort((a, b) => a.seat - b.seat)
+  const teamB = players.filter((p) => p.teamId === 'team-b').sort((a, b) => a.seat - b.seat)
+  const seated: Player[] = []
+  const n = Math.max(teamA.length, teamB.length)
+  for (let i = 0; i < n; i += 1) {
+    if (teamA[i]) seated.push({ ...teamA[i], seat: seated.length })
+    if (teamB[i]) seated.push({ ...teamB[i], seat: seated.length })
+  }
+  return seated
+}
+
 function nextFreeSeat(players: Player[], capacity: number): number {
   const used = new Set(players.map((p) => p.seat))
   for (let seat = 0; seat < capacity; seat += 1) {
@@ -62,7 +75,7 @@ export function fillLobbyBots(room: RoomState): RoomState {
     })
   }
 
-  return rebuildLobbyTeams({ ...room, players })
+  return rebuildLobbyTeams({ ...room, players: seatPlayersAlternating(players) })
 }
 
 export function removeLobbyBots(room: RoomState): RoomState {
@@ -90,10 +103,8 @@ export function switchTeamAllowingBotSwap(
   const perTeam = seatsPerTeam(normalizeMaxPlayers(room.maxPlayers))
   const dest = room.players.filter((p) => p.teamId === teamId)
   if (dest.length < perTeam) {
-    return rebuildLobbyTeams({
-      ...room,
-      players: room.players.map((p) => (p.id === playerId ? { ...p, teamId } : p)),
-    })
+    const moved = room.players.map((p) => (p.id === playerId ? { ...p, teamId } : p))
+    return rebuildLobbyTeams({ ...room, players: seatPlayersAlternating(moved) })
   }
 
   const destBot = dest.find((p) => p.isMock)
@@ -101,14 +112,12 @@ export function switchTeamAllowingBotSwap(
 
   const fromTeam = player.teamId
   const fromSeat = player.seat
-  return rebuildLobbyTeams({
-    ...room,
-    players: room.players.map((p) => {
-      if (p.id === playerId) return { ...p, teamId, seat: destBot.seat }
-      if (p.id === destBot.id) return { ...p, teamId: fromTeam, seat: fromSeat }
-      return p
-    }),
+  const swapped = room.players.map((p) => {
+    if (p.id === playerId) return { ...p, teamId, seat: destBot.seat }
+    if (p.id === destBot.id) return { ...p, teamId: fromTeam, seat: fromSeat }
+    return p
   })
+  return rebuildLobbyTeams({ ...room, players: seatPlayersAlternating(swapped) })
 }
 
 /** Shrink/grow capacity. Humans are never dropped; extra bots are removed. */
@@ -131,5 +140,5 @@ export function resizeLobbyCapacity(room: RoomState, capacity: 2 | 4): RoomState
     )
     players = players.filter((p) => !dropIds.has(p.id))
   }
-  return rebuildLobbyTeams({ ...room, players, maxPlayers: capacity })
+  return rebuildLobbyTeams({ ...room, players: seatPlayersAlternating(players), maxPlayers: capacity })
 }

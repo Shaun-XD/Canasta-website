@@ -349,6 +349,27 @@ describe('attemptMeldAction (the unified "Meld" action - items 3, 5 & 8)', () =>
     const wildStillPresent = resolved.meld.slots.some((s) => s.card.id === displacedWild.id)
     expect(wildStillPresent).toBe(true)
   })
+
+  it('appends several cards onto a canasta even if selected high-then-low', () => {
+    const built = buildSequence(
+      [c('5', 'spades'), c('6', 'spades'), c('7', 'spades'), c('8', 'spades'), c('9', 'spades'), c('10', 'spades'), c('J', 'spades')],
+      'team-a',
+    )
+    if (!built.ok) throw new Error('setup failed')
+    const queen = c('Q', 'spades')
+    const king = c('K', 'spades')
+    const team: Team = { ...makeTeam('team-a'), melds: [built.meld] }
+    const result = attemptMeldAction({
+      hand: [king, queen],
+      team,
+      selectedHandCardIds: [king.id, queen.id],
+      targetMeldId: built.meld.id,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'])
+    expect(result.hand).toEqual([])
+  })
 })
 
 describe('performDiscard', () => {

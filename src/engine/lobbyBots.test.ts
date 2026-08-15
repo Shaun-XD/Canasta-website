@@ -58,6 +58,8 @@ describe('fillLobbyBots', () => {
     expect(room.players.filter((p) => p.teamId === 'team-b')).toHaveLength(2)
     expect(room.players.filter((p) => p.isMock)).toHaveLength(2)
     expect(room.players.filter((p) => p.isMock).every((p) => p.isReady)).toBe(true)
+    const bySeat = [...room.players].sort((a, b) => a.seat - b.seat)
+    expect(bySeat.map((p) => p.teamId)).toEqual(['team-a', 'team-b', 'team-a', 'team-b'])
   })
 
   it('puts both bots on the empty team when humans sit together', () => {
@@ -86,11 +88,11 @@ describe('switchTeamAllowingBotSwap', () => {
     const ada = swapped.players.find((p) => p.id === 'h1')!
     const movedBot = swapped.players.find((p) => p.id === botOnB.id)!
     expect(ada.teamId).toBe('team-b')
-    expect(ada.seat).toBe(botOnB.seat)
     expect(movedBot.teamId).toBe('team-a')
-    expect(movedBot.seat).toBe(0)
     expect(swapped.players.filter((p) => p.teamId === 'team-a')).toHaveLength(2)
     expect(swapped.players.filter((p) => p.teamId === 'team-b')).toHaveLength(2)
+    const bySeat = [...swapped.players].sort((a, b) => a.seat - b.seat)
+    expect(bySeat.map((p) => p.teamId)).toEqual(['team-a', 'team-b', 'team-a', 'team-b'])
   })
 
   it('rejects a switch onto a team that is full of humans', () => {

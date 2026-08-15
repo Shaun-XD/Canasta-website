@@ -28,5 +28,9 @@ export function shouldSkipOnlineSnapshot(opts: {
     (prevGame.hands[localPlayerId ?? '']?.length ?? -1) !==
     (nextGame.hands[localPlayerId ?? '']?.length ?? -1)
   const acquiredNew = nextGame.lastAcquired?.at !== prevGame.lastAcquired?.at
-  return !stockChanged && !localHandChanged && !acquiredNew
+  const slideChanged =
+    (prevGame.pendingSlide?.displacedWildCardId ?? null) !==
+      (nextGame.pendingSlide?.displacedWildCardId ?? null) ||
+    (prevGame.pendingSlide?.meldId ?? null) !== (nextGame.pendingSlide?.meldId ?? null)
+  return !stockChanged && !localHandChanged && !acquiredNew && !slideChanged
 }

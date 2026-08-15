@@ -31,6 +31,7 @@ import {
   fillLobbyBots,
   removeLobbyBots,
   resizeLobbyCapacity,
+  seatPlayersAlternating,
   switchTeamAllowingBotSwap,
 } from '../../src/engine/lobbyBots.ts'
 import { playBotsUntilHuman } from '../../src/engine/applyBotTurn.ts'
@@ -327,7 +328,9 @@ function join_room(params: { roomId: string; playerName: string }): {
     }
     session.room = rebuildTeamPlayerIds({
       ...session.room,
-      players: session.room.players.map((p) => (p.id === replaceBot.id ? player : p)),
+      players: seatPlayersAlternating(
+        session.room.players.map((p) => (p.id === replaceBot.id ? player : p)),
+      ),
     })
     return { roomId: session.room.roomId, playerId, room: session.room, game: session.game }
   }
@@ -353,7 +356,7 @@ function join_room(params: { roomId: string; playerName: string }): {
   }
   session.room = rebuildTeamPlayerIds({
     ...session.room,
-    players: [...session.room.players, player],
+    players: seatPlayersAlternating([...session.room.players, player]),
   })
   return { roomId: session.room.roomId, playerId, room: session.room, game: session.game }
 }
@@ -599,7 +602,8 @@ function attempt_meld(params: {
           displacedWildCardId: result.needsSlideChoice.displacedWildCardId,
         },
       }
-      return { room, game: session.game, error: result.error }
+      // Do not emit action:error — the table shows the slide popup from pendingSlide.
+      return { room, game: session.game }
     }
     throw new Error(result.error)
   }
