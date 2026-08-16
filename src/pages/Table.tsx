@@ -366,7 +366,7 @@ export function Table() {
 
   if (handheld) {
   return (
-    <div className={`felt-bg table-shell relative flex flex-col text-white ${menuOpen ? 'table-menu-open' : ''}`}>
+    <div className={`felt-bg table-shell table-shell-handheld relative flex flex-col text-white ${menuOpen ? 'table-menu-open' : ''}`}>
       <div className="rotate-landscape-gate" role="dialog" aria-label="Rotate to landscape">
         <div className="rotate-landscape-card">
           <p className="text-lg font-bold text-white">Rotate your phone</p>
@@ -460,7 +460,7 @@ export function Table() {
         </div>
       )}
 
-      <div className="relative mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
+      <div className="table-board relative mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
         {/* WEST | MELDS (grow) | EAST — melds own the vertical space */}
         <div className="melds-row relative flex min-h-0 flex-[1_1_0] items-stretch gap-1 sm:gap-1.5">
           <div className="side-seat side-seat-west flex w-11 shrink-0 flex-col items-center justify-center">
