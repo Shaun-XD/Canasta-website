@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { useGameStore } from './gameStore'
 import { c } from '../engine/testHelpers'
-import type { CardModel } from '../types/game'
+import { buildSequence } from '../engine/meldValidation'
+import type { CardModel, Meld } from '../types/game'
 
 /**
  * Regression coverage for the "discard pile disappears on click" bug: the
@@ -469,5 +470,136 @@ describe('local stock draw', () => {
     expect(after.game!.stock.length).toBe(stockLen - 1)
     expect(after.game!.turn.phase).toBe('action')
     expect(after.game!.turn.hasDrawnThisTurn).toBe(true)
+  })
+})
+
+describe('Top Touch meld from the discard pile', () => {
+  beforeEach(() => {
+    useGameStore.setState({
+      room: null,
+      game: null,
+      localPlayerId: null,
+      playMode: 'solo',
+      selectedCardIds: [],
+      selectedMeldId: null,
+      topTouchInProgress: false,
+      selectedDiscardIds: [],
+      lastActionError: null,
+    })
+  })
+
+  function setupDrawTurn(opts: {
+    discardCards: CardModel[]
+    hand: CardModel[]
+    existingMeld?: Meld
+  }) {
+    const { actions } = useGameStore.getState()
+    actions.createRoom('Tester')
+    actions.toggleReady()
+    actions.startGame()
+
+    const state = useGameStore.getState()
+    const localId = state.localPlayerId!
+    const game = state.game!
+    const room = state.room!
+    const topId = opts.discardCards[opts.discardCards.length - 1].id
+    const team = room.teams.find((t) => t.playerIds.includes(localId))!
+    const nextRoom = opts.existingMeld
+      ? {
+          ...room,
+          teams: room.teams.map((t) => (t.id === team.id ? { ...t, melds: [opts.existingMeld!] } : t)),
+        }
+      : room
+
+    useGameStore.setState({
+      playMode: 'solo',
+      room: nextRoom,
+      game: {
+        ...game,
+        discardPile: { cards: opts.discardCards },
+        hands: { ...game.hands, [localId]: opts.hand },
+        turn: {
+          ...game.turn,
+          activePlayerId: localId,
+          phase: 'draw',
+          hasDrawnThisTurn: false,
+          isPaused: true,
+        },
+      },
+      topTouchInProgress: true,
+      selectedDiscardIds: [topId],
+      selectedCardIds: [],
+      selectedMeldId: null,
+      lastActionError: null,
+    })
+    return localId
+  }
+
+  it('melds three discard cards with no hand cards selected', () => {
+    const discardCards = [c('4', 'hearts'), c('4', 'spades'), c('4', 'clubs')]
+    const localId = setupDrawTurn({ discardCards, hand: [c('3', 'diamonds')] })
+
+    useGameStore.getState().actions.toggleDiscardPileCard(discardCards[0].id)
+    useGameStore.getState().actions.toggleDiscardPileCard(discardCards[1].id)
+    expect(useGameStore.getState().selectedDiscardIds).toHaveLength(3)
+
+    useGameStore.getState().actions.attemptMeld()
+
+    const after = useGameStore.getState()
+    expect(after.lastActionError).toBeNull()
+    expect(after.topTouchInProgress).toBe(false)
+    expect(after.game!.discardPile.cards).toEqual([])
+    expect(after.game!.turn.phase).toBe('action')
+    const team = after.room!.teams.find((t) => t.playerIds.includes(localId))!
+    expect(team.melds).toHaveLength(1)
+    expect(team.melds[0].type).toBe('set')
+    expect(team.melds[0].rank).toBe('4')
+    expect(team.melds[0].slots).toHaveLength(3)
+    expect(after.game!.hands[localId].map((card) => card.rank)).toEqual(['3'])
+  })
+
+  it('melds two discard cards plus one hand card', () => {
+    const buried = c('5', 'hearts')
+    const top = c('5', 'clubs')
+    const handFive = c('5', 'spades')
+    const localId = setupDrawTurn({
+      discardCards: [c('K', 'diamonds'), buried, top],
+      hand: [handFive, c('3', 'diamonds')],
+    })
+
+    useGameStore.getState().actions.toggleDiscardPileCard(buried.id)
+    useGameStore.setState({ selectedCardIds: [handFive.id] })
+    useGameStore.getState().actions.attemptMeld()
+
+    const after = useGameStore.getState()
+    expect(after.lastActionError).toBeNull()
+    const team = after.room!.teams.find((t) => t.playerIds.includes(localId))!
+    expect(team.melds[0].rank).toBe('5')
+    expect(team.melds[0].slots).toHaveLength(3)
+    expect(after.game!.hands[localId].some((card) => card.id === handFive.id)).toBe(false)
+  })
+
+  it('appends multiple discard cards onto an existing sequence', () => {
+    const existing = buildSequence(
+      [c('5', 'spades'), c('6', 'spades'), c('7', 'spades')],
+      'team-a',
+    )
+    if (!existing.ok) throw new Error('setup failed')
+    const eight = c('8', 'spades')
+    const nine = c('9', 'spades')
+    const localId = setupDrawTurn({
+      discardCards: [eight, nine],
+      hand: [c('3', 'diamonds')],
+      existingMeld: existing.meld,
+    })
+
+    useGameStore.getState().actions.toggleDiscardPileCard(eight.id)
+    useGameStore.setState({ selectedMeldId: existing.meld.id })
+    useGameStore.getState().actions.attemptMeld()
+
+    const after = useGameStore.getState()
+    expect(after.lastActionError).toBeNull()
+    const team = after.room!.teams.find((t) => t.playerIds.includes(localId))!
+    expect(team.melds[0].slots.map((s) => s.slotRank)).toEqual(['5', '6', '7', '8', '9'])
   })
 })

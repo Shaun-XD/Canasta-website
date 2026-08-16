@@ -456,6 +456,8 @@ interface GameStoreState {
      * Uses the current hand-card selection + targeted meld group (and, if
      * `topTouchInProgress`, the selected discard cards) to either append to
      * the targeted meld or auto-detect + create a brand-new Set/Sequence.
+     * During Top Touch, hand cards are optional: the unlocking meld may be
+     * built entirely from selected discard cards (3+ including the top).
      */
     attemptMeld: () => void
     /** Item 7: toggles a Set's single edge-positioned wild card between front/back. */

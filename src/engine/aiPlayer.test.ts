@@ -441,6 +441,40 @@ describe('planAiDraw — Top Touch only when plus-sum positive', () => {
     expect(plan.selectedDiscardIds).toContain(top.id)
   })
 
+  it('Top Touches a legal 3-card sequence sitting entirely on the discard pile', () => {
+    const pile = [c('4', 'hearts'), c('5', 'hearts'), c('6', 'hearts')]
+    const plan = planAiDraw([c('3', 'clubs')], [], pile, 'team-a')
+    expect(plan.source).toBe('top-touch')
+    expect(plan.kind).toBe('sequence')
+    expect(plan.handCardIds).toEqual([])
+    expect(plan.selectedDiscardIds).toEqual(expect.arrayContaining(pile.map((card) => card.id)))
+  })
+
+  it('Top Touches three matching ranks from the pile even with a gap', () => {
+    const a = c('4', 'hearts')
+    const junk = c('K', 'diamonds')
+    const b = c('4', 'spades')
+    const top = c('4', 'clubs')
+    const plan = planAiDraw([c('3', 'hearts')], [], [a, junk, b, top], 'team-a')
+    expect(plan.source).toBe('top-touch')
+    expect(plan.kind).toBe('set')
+    expect(plan.handCardIds).toEqual([])
+    expect(plan.selectedDiscardIds).toEqual(expect.arrayContaining([a.id, b.id, top.id]))
+    expect(plan.selectedDiscardIds).not.toContain(junk.id)
+  })
+
+  it('Top Touches by appending a contiguous run from the pile onto an existing sequence', () => {
+    const built = buildSequence([c('5', 'spades'), c('6', 'spades'), c('7', 'spades')], 'team-a')
+    if (!built.ok) throw new Error('setup')
+    const eight = c('8', 'spades')
+    const nine = c('9', 'spades')
+    const plan = planAiDraw([c('3', 'hearts')], [built.meld], [eight, nine], 'team-a')
+    expect(plan.source).toBe('top-touch')
+    expect(plan.kind).toBe('append')
+    expect(plan.targetMeldId).toBe(built.meld.id)
+    expect(plan.selectedDiscardIds).toEqual(expect.arrayContaining([eight.id, nine.id]))
+  })
+
   it('scores a rich remainder pile higher than a barren one for the same unlock', () => {
     const a = c('6', 'hearts')
     const b = c('6', 'spades')

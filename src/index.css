@@ -20,7 +20,9 @@ html,
 body,
 #root {
   height: 100%;
+  height: 100dvh;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -48,6 +50,23 @@ body {
 .table-shell {
   min-height: 100%;
   min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  padding-top: var(--safe-top);
+  padding-right: var(--safe-right);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+}
+
+.page-scroll {
+  min-height: 100%;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: none;
   padding-top: var(--safe-top);
   padding-right: var(--safe-right);
   padding-bottom: var(--safe-bottom);
@@ -73,14 +92,102 @@ body {
 }
 
 .table-topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.55rem 0.9rem;
+  gap: 0.45rem;
+  padding: 0.28rem 0.55rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(8px);
+}
+
+.table-menu-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  background: rgba(4, 18, 12, 0.42);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+.table-menu-open .table-topbar {
+  position: relative;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.table-menu-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3.5px;
+  width: 2rem;
+  height: 2rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  pointer-events: auto;
+}
+
+.table-menu-open .table-menu-btn {
+  position: relative;
+  z-index: 101;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.table-menu-btn span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.table-menu-panel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 110;
+  min-width: min(18rem, calc(100% - 2.5rem));
+  overflow: hidden;
+  border-radius: 1rem;
+  background: rgba(8, 36, 24, 0.96);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transform: translate(-50%, -50%);
+}
+
+.table-menu-kicker {
+  padding: 0.9rem 1rem 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(250, 204, 21, 0.85);
+}
+
+.table-menu-panel button {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.85rem;
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: white;
+}
+
+.table-menu-panel button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.table-menu-exit {
+  color: #fecaca;
 }
 
 .players-strip {
@@ -128,8 +235,8 @@ body {
 }
 
 .melds-row {
-  /* Claim the bulk of the board height for Team Red / Team Blue */
-  min-height: min(52vh, 34rem);
+  /* Claim leftover board height after header / hub / hand — never force 52vh. */
+  min-height: 0;
   flex: 1 1 0;
 }
 
@@ -145,6 +252,96 @@ body {
   border-radius: 0.65rem;
   box-shadow: none;
   backdrop-filter: none;
+}
+
+.play-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.play-dock-banner {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.play-dock-row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.45rem 0.55rem;
+}
+
+.play-dock-local {
+  position: absolute;
+  left: 0;
+  bottom: 0.15rem;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  pointer-events: auto;
+}
+
+.play-dock-piles {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+
+.stock-btn {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  line-height: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.discard-slot,
+.discard-fan {
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  line-height: 0;
+}
+
+.play-dock-hand {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding-left: 3.5rem;
+}
+
+@media (min-width: 640px) {
+  .play-dock-hand {
+    padding-left: 0.25rem;
+  }
+}
+
+.play-dock-tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.play-dock-help:empty {
+  display: none;
+}
+
+.rotate-landscape-gate {
+  display: none;
 }
 
 .action-btn {
@@ -170,6 +367,10 @@ body {
   font-size: 0.72rem;
   white-space: nowrap;
   border-radius: 0.55rem;
+}
+
+.action-btn.action-btn-stack {
+  min-width: 0;
 }
 
 .pause-chip {
@@ -261,9 +462,20 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+.hand-rail-swipe {
+  justify-content: flex-start;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hand-rail-swipe::-webkit-scrollbar {
+  display: none;
+}
+
 .discard-fan {
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE/Edge legacy */
+  -webkit-overflow-scrolling: touch;
 }
 
 .discard-fan::-webkit-scrollbar {
@@ -336,4 +548,187 @@ body {
 
 .animate-banner-in {
   animation: banner-in 280ms ease-out both;
+}
+
+@media (max-width: 639px), (max-height: 700px) {
+  .play-hub {
+    padding-top: 0.15rem;
+    padding-bottom: 0.15rem;
+  }
+
+  .pozzetto-overlay {
+    transform: scale(0.82);
+    transform-origin: top right;
+  }
+
+  .action-btn-stack {
+    min-height: 1.7rem;
+    padding: 0.2rem 0.35rem;
+    font-size: 0.65rem;
+  }
+}
+
+/* Phones: play in landscape. Portrait gets a rotate gate; short landscape docks the hand. */
+@media (orientation: portrait) and (max-width: 500px) {
+  .rotate-landscape-gate {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: rgba(5, 28, 18, 0.92);
+    backdrop-filter: blur(12px);
+  }
+
+  .rotate-landscape-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 16rem;
+  }
+
+  .rotate-landscape-card::before {
+    content: '';
+    width: 3.25rem;
+    height: 2rem;
+    margin-bottom: 0.85rem;
+    border: 2.5px solid rgba(250, 204, 21, 0.85);
+    border-radius: 0.4rem;
+    box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.2);
+    animation: phone-to-landscape 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes phone-to-landscape {
+  0%,
+  30% {
+    transform: rotate(90deg);
+  }
+  50%,
+  80% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(90deg);
+  }
+}
+
+@media (orientation: landscape) and (max-height: 540px) {
+  .table-topbar {
+    padding: 0.12rem 0.45rem;
+    gap: 0.3rem;
+  }
+
+  .table-menu-btn {
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0.28rem 0.32rem;
+    gap: 3px;
+  }
+
+  .melds-row {
+    gap: 0.2rem;
+  }
+
+  .side-player-meta {
+    display: none;
+  }
+
+  .side-player {
+    padding: 0.2rem 0.15rem;
+    gap: 0.2rem;
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .melds-grid > .felt-panel {
+    padding: 0.3rem 0.4rem;
+  }
+
+  .play-dock {
+    gap: 0.1rem;
+    padding: 0.05rem 0.85rem 0.25rem 0.45rem;
+  }
+
+  .play-dock-banner {
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    z-index: 28;
+    width: auto;
+    transform: translateX(-50%);
+    margin-bottom: 0.15rem;
+    pointer-events: none;
+  }
+
+  .play-dock-banner > * {
+    pointer-events: auto;
+  }
+
+  .play-dock-row {
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    gap: 0.3rem;
+  }
+
+  .play-dock-local {
+    position: static;
+    flex: 0 0 auto;
+  }
+
+  .play-dock-local-name {
+    display: none;
+  }
+
+  .play-dock-piles {
+    flex: 0 0 auto;
+    align-items: flex-end;
+    gap: 0.3rem;
+  }
+
+  .play-dock-piles .discard-fan {
+    padding: 0;
+  }
+
+  .play-dock-hand {
+    flex: 1 1 0;
+    padding-left: 0;
+  }
+
+  .play-dock-tools {
+    gap: 0.2rem;
+    margin-right: 0.35rem;
+    padding-right: 0.15rem;
+  }
+
+  .hand-sort-buttons {
+    gap: 0.15rem;
+  }
+
+  .hand-sort-buttons button {
+    height: 1.55rem;
+    width: 1.55rem;
+  }
+
+  .action-btn-stack {
+    min-height: 1.2rem;
+    padding: 0.08rem 0.2rem;
+    font-size: 0.58rem;
+  }
+
+  .action-stack {
+    width: 3.4rem;
+  }
+
+  .play-dock-help {
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    z-index: 40;
+    width: min(28rem, calc(100% - 8rem));
+    transform: translateX(-50%);
+    margin-bottom: 0.2rem;
+  }
 }

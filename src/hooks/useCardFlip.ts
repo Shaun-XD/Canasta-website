@@ -24,6 +24,19 @@ export const FLIP_DURATION_MS = 380
 /** Slower flights for bot/mock plays so the user can see what was moved. */
 export const BOT_FLIP_DURATION_MS = 900
 const FLIP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)' // ease-out
+/** Detached bot/remote flights stay at table-card size, not desktop 72px. */
+const DETACHED_FLIGHT_WIDTH_MAX = 40
+const DETACHED_FLIGHT_WIDTH_FALLBACK = 32
+
+function rectWidth(r: DOMRect | FlipPosition): number {
+  return 'width' in r && typeof r.width === 'number' && r.width > 8 ? r.width : 0
+}
+
+function flightWidthFromRects(from: DOMRect | FlipPosition, to: DOMRect | FlipPosition): number {
+  const measured = [rectWidth(from), rectWidth(to)].filter((w) => w > 0)
+  const raw = measured.length > 0 ? Math.min(...measured) : DETACHED_FLIGHT_WIDTH_FALLBACK
+  return Math.round(Math.min(DETACHED_FLIGHT_WIDTH_MAX, raw))
+}
 
 /** Card ids whose next FLIP flight should use {@link BOT_FLIP_DURATION_MS}. */
 const pendingBotFlipIds = new Set<string>()
@@ -156,7 +169,7 @@ export function playDetachedCardFlight(opts: {
   /** Defaults to the fast human duration; bots pass {@link BOT_FLIP_DURATION_MS}. */
   durationMs?: number
 }): Promise<void> {
-  const width = opts.width ?? 72
+  const width = opts.width ?? flightWidthFromRects(opts.from, opts.to)
   const height = opts.height ?? Math.round(width * 1.4)
   const durationMs = opts.durationMs ?? FLIP_DURATION_MS
   const fromLeft = opts.from.left
@@ -184,7 +197,7 @@ export function playDetachedCardFlight(opts: {
   // Lightweight face-down visual (matches Card back colors) so we don't need
   // to mount a React Card just for a bot draw flight.
   ghost.innerHTML = opts.faceDown !== false
-    ? `<div style="width:100%;height:100%;background:#0f2a63;border:2px solid #93c5fd;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#93c5fd;font:700 14px/1 system-ui,sans-serif;">C</div>`
+    ? `<div style="width:100%;height:100%;background:#0f2a63;border:1.5px solid #93c5fd;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#93c5fd;font:700 ${Math.max(8, Math.round(width * 0.28))}px/1 system-ui,sans-serif;">C</div>`
     : `<div style="width:100%;height:100%;background:#fff;border:1px solid #d4d4d8;border-radius:8px;"></div>`
   document.body.appendChild(ghost)
 

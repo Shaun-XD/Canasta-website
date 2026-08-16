@@ -49,7 +49,7 @@ export function Lobby() {
 
   if (sessionCheck === 'pending') {
     return (
-      <div className="felt-bg flex min-h-screen items-center justify-center text-white/70">
+      <div className="felt-bg page-scroll flex items-center justify-center text-white/70">
         Reconnecting to lobby…
       </div>
     )
@@ -88,7 +88,7 @@ export function Lobby() {
   }
 
   return (
-    <div className="felt-bg min-h-screen px-4 py-10 text-white">
+    <div className="felt-bg page-scroll px-4 py-6 text-white sm:py-10">
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 flex justify-start">
           <button
@@ -100,11 +100,11 @@ export function Lobby() {
           </button>
         </div>
 
-        <div className="mb-8 flex flex-col items-center gap-2 text-center">
+        <div className="mb-6 flex flex-col items-center gap-2 text-center sm:mb-8">
           <span className="text-xs font-semibold uppercase tracking-widest text-white/50">
             Room Code — share with friends
           </span>
-          <div className="rounded-xl border border-white/15 bg-black/30 px-6 py-3 text-3xl font-black tracking-[0.3em] text-yellow-300 shadow-lg">
+          <div className="rounded-xl border border-white/15 bg-black/30 px-4 py-2.5 text-2xl font-black tracking-[0.18em] text-yellow-300 shadow-lg sm:px-6 sm:py-3 sm:text-3xl sm:tracking-[0.3em]">
             {room.roomId}
           </div>
           <span className="text-xs font-medium text-white/50">
@@ -271,7 +271,7 @@ export function Lobby() {
           </p>
         )}
 
-        <div className="mt-8 flex flex-col items-center gap-3">
+        <div className="mt-6 flex flex-col items-center gap-3 pb-4 sm:mt-8">
           <button
             type="button"
             onClick={toggleReady}

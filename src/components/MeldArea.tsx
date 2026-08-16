@@ -6,22 +6,29 @@ import { AnimatedCard } from './AnimatedCard'
 
 const CLASSIFICATION_LABEL: Record<MeldClassification, string> = {
   'in-progress': '',
-  'mixed-canasta': 'MIXED CANASTA',
+  'mixed-canasta': 'MIXED',
   limpa: 'LIMPA',
-  'mixed-canasta-2s': 'MIXED CANASTA (2s)',
-  'limpa-2s': 'LIMPA OF 2s',
+  'mixed-canasta-2s': 'MIXED 2s',
+  'limpa-2s': 'LIMPA 2s',
+}
+
+const CLASSIFICATION_TITLE: Record<MeldClassification, string> = {
+  'in-progress': '',
+  'mixed-canasta': 'Mixed Canasta',
+  limpa: 'Limpa',
+  'mixed-canasta-2s': 'Mixed Canasta of 2s',
+  'limpa-2s': 'Limpa of 2s',
 }
 
 const CLASSIFICATION_COLOR: Record<MeldClassification, string> = {
   'in-progress': '',
-  'mixed-canasta': 'bg-orange-400 text-orange-950',
-  limpa: 'bg-emerald-300 text-emerald-950',
-  'mixed-canasta-2s': 'bg-sky-300 text-sky-950',
-  'limpa-2s': 'bg-yellow-300 text-yellow-950',
+  'mixed-canasta': 'bg-orange-400/40 text-white/80 ring-1 ring-white/15',
+  limpa: 'bg-emerald-300/40 text-white/80 ring-1 ring-white/15',
+  'mixed-canasta-2s': 'bg-sky-300/40 text-white/80 ring-1 ring-white/15',
+  'limpa-2s': 'bg-yellow-300/40 text-white/80 ring-1 ring-white/15',
 }
 
 const MELD_CARD_MAX = 75
-const MELD_CARD_MIN = 45
 /** Peek as a fraction of card height — tight like the reference (index strip only). */
 const MELD_PEEK_RATIO = 0.38
 const MELD_GAP = 7
@@ -34,6 +41,7 @@ export function MeldArea({
   onSelectMeld,
   canModify = false,
   onMoveWild,
+  maxCardWidth = MELD_CARD_MAX,
 }: {
   team: Team
   align?: 'left' | 'right' | 'center'
@@ -42,6 +50,8 @@ export function MeldArea({
   onSelectMeld?: (meldId: string) => void
   canModify?: boolean
   onMoveWild?: (meldId: string) => void
+  /** Cap so table melds stay slightly smaller than the local hand cards. */
+  maxCardWidth?: number
 }) {
   const shellRef = useRef<HTMLDivElement>(null)
   const [cardWidth, setCardWidth] = useState(54)
@@ -53,13 +63,14 @@ export function MeldArea({
       const n = Math.max(1, team.melds.length)
       const available = el.clientWidth - 8 // inner padding
       const perCol = (available - MELD_GAP * (n - 1)) / n
-      setCardWidth(Math.max(MELD_CARD_MIN, Math.min(MELD_CARD_MAX, Math.floor(perCol))))
+      const cap = Math.min(MELD_CARD_MAX, maxCardWidth)
+      setCardWidth(Math.max(28, Math.min(cap, Math.floor(perCol))))
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [team.melds.length])
+  }, [team.melds.length, maxCardWidth])
 
   const cardHeight = Math.round(cardWidth * 1.4)
   const peekPx = Math.max(16, Math.round(cardHeight * MELD_PEEK_RATIO))
@@ -68,7 +79,7 @@ export function MeldArea({
   return (
     <div
       ref={shellRef}
-      className={`flex h-full min-h-0 w-full flex-nowrap items-start overflow-x-clip overflow-y-visible rounded-lg bg-black/10 p-1 sm:p-1.5 ${
+      className={`flex h-full min-h-0 w-full flex-nowrap items-start overflow-x-clip overflow-y-visible rounded-lg bg-black/10 px-1 pb-1 pt-3.5 sm:px-1.5 sm:pb-1.5 sm:pt-4 ${
         align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
       }`}
       style={{ gap: MELD_GAP, minHeight: team.melds.length === 0 ? 64 : undefined }}
@@ -127,6 +138,8 @@ function MeldColumn({
   const cardHeight = Math.round(cardWidth * 1.4)
   const bottomIndex = cards.length - 1
   const colMaxW = isComplete ? cardHeight + 6 : cardWidth + 4
+  const classLabel = CLASSIFICATION_LABEL[meld.classification]
+  const classTitle = CLASSIFICATION_TITLE[meld.classification]
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col items-center gap-0.5" style={{ maxWidth: colMaxW }}>
@@ -134,11 +147,18 @@ function MeldColumn({
         type="button"
         onClick={onSelect}
         disabled={!selectable}
-        title={`${label}${meld.isCanasta ? ` · ${CLASSIFICATION_LABEL[meld.classification]}` : ''}`}
-        className={`relative flex w-full flex-col items-center overflow-visible rounded-md p-0.5 transition ${
+        title={`${label}${classTitle ? ` · ${classTitle}` : ''}`}
+        className={`relative flex w-full flex-col items-center overflow-visible rounded-md px-0.5 py-0.5 transition ${
           selectable ? 'cursor-pointer hover:bg-white/10' : 'cursor-default'
         } ${selected ? 'ring-2 ring-yellow-300' : ''}`}
       >
+        {isComplete && classLabel && (
+          <span
+            className={`pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[110%] whitespace-nowrap rounded-full px-1.5 py-px text-[8px] font-semibold uppercase leading-none tracking-wide ${CLASSIFICATION_COLOR[meld.classification]}`}
+          >
+            {classLabel}
+          </span>
+        )}
         {cards.map((card, i) => {
           const isSideways = isComplete && i === bottomIndex
           const marginTop =
@@ -172,15 +192,8 @@ function MeldColumn({
             />
           )
         })}
-        {meld.isCanasta && (
-          <span
-            className={`absolute -top-1.5 -right-1 z-50 rounded-full px-1 py-0.5 text-[7px] font-bold shadow ${CLASSIFICATION_COLOR[meld.classification]}`}
-          >
-            {CLASSIFICATION_LABEL[meld.classification]}
-          </span>
-        )}
         {(meld.wildCount > 0 || hasMovableTwo) && !meld.isCanasta && (
-          <span className="absolute -bottom-1 -right-1 z-50 rounded-full bg-purple-400 px-1 py-0.5 text-[7px] font-bold text-purple-950 shadow">
+          <span className="pointer-events-none absolute -bottom-0.5 right-0 z-20 rounded-full bg-purple-400/40 px-1 py-px text-[6px] font-semibold uppercase leading-none tracking-wide text-white/80 ring-1 ring-white/15">
             {meld.wildCount > 0 ? 'WILD' : '2★'}
           </span>
         )}

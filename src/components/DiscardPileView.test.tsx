@@ -1,7 +1,17 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import { DiscardPileView } from './DiscardPileView'
+import { DiscardPileView, discardFanWidth } from './DiscardPileView'
 import { c } from '../engine/testHelpers'
+
+describe('discardFanWidth', () => {
+  it('grows with the pile up to 9 cards, then stays capped', () => {
+    const w = 40
+    expect(discardFanWidth(w, 1)).toBe(40)
+    expect(discardFanWidth(w, 2)).toBeLessThan(discardFanWidth(w, 9))
+    expect(discardFanWidth(w, 9)).toBe(discardFanWidth(w, 15))
+    expect(discardFanWidth(w, 9)).toBeGreaterThan(discardFanWidth(w, 5))
+  })
+})
 
 /**
  * Regression coverage for the two symptoms in the "discard pile
@@ -94,36 +104,53 @@ describe('DiscardPileView - Top Touch selection clicks', () => {
     expect(onToggleDiscardCard).toHaveBeenCalledWith(cards[1].id)
   })
 
-  it('keeps hover scale/translate on an inner visual wrapper (group-hover), never on the outer measured ancestor', () => {
-    // Regression for "pile disappears on hover": CSS transforms on an ancestor
-    // of the FLIP-measured node change getBoundingClientRect and falsely
-    // trigger a mass flight/hide. Hover polish must use group-hover on an
-    // inner node instead of hover:scale / hover:-translate-y on the outer.
-    const cards = [c('9', 'spades'), c('10', 'spades')]
-    const { container } = render(<DiscardPileView cards={cards} />)
+  it('highlights hover with a ring, never scale/translate/filter on the card face', () => {
+    // Regression for "discard card disappears when highlighted": scale +
+    // drop-shadow (filter) on a parent of Card's overflow-hidden <img>
+    // clips the face to a tiny corner. Hover polish must be a ring only.
+    const cards = [c('A', 'spades')]
+    const { container } = render(
+      <DiscardPileView cards={cards} topCardInteractive onTopCardClick={() => undefined} />,
+    )
 
-    const outer = container.querySelectorAll('[role="button"], .group')[0] as HTMLElement | undefined
-    // The fanned cards are group wrappers even when not clickable.
     const group = container.querySelector('.group') as HTMLElement
     expect(group).toBeTruthy()
     expect(group.className).not.toMatch(/hover:scale-/)
     expect(group.className).not.toMatch(/hover:-translate-y-/)
     expect(group.className).toMatch(/\bgroup\b/)
 
-    // Inner AnimatedCard visual wrapper receives the group-hover lift classes.
     const html = container.innerHTML
-    expect(html).toMatch(/group-hover:scale-\[1\.12\]/)
-    expect(html).toMatch(/group-hover:-translate-y-2/)
-    void outer
+    expect(html).not.toMatch(/group-hover:scale-/)
+    expect(html).not.toMatch(/group-hover:-translate-y-/)
+    expect(html).not.toMatch(/group-hover:drop-shadow/)
+    expect(html).toMatch(/group-hover:ring-2/)
   })
 
-  it('reserves top padding so selection/hover lift is not clipped by overflow-x-auto', () => {
-    const cards = [c('6', 'spades'), c('6', 'clubs')]
-    const { container } = render(
-      <DiscardPileView cards={cards} topTouchInProgress selectedDiscardIds={[cards[1].id]} />,
-    )
-    const row = container.firstElementChild as HTMLElement
-    expect(row.className).toMatch(/pt-14/)
-    expect(row.className).not.toMatch(/overflow-y-hidden/)
+  it('does not scroll a pile of 9 or fewer, and scrolls from the 10th card', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => c('6', i % 2 === 0 ? 'hearts' : 'clubs'))
+    const { container, rerender } = render(<DiscardPileView cards={nine} cardWidth={40} />)
+    expect((container.querySelector('.discard-fan') as HTMLElement).className).not.toMatch(/overflow-x-auto/)
+
+    const ten = [...nine, c('7', 'spades')]
+    rerender(<DiscardPileView cards={ten} cardWidth={40} />)
+    expect((container.querySelector('.discard-fan') as HTMLElement).className).toMatch(/overflow-x-auto/)
+  })
+
+  it('keeps a 9-card-wide slot and enables hidden horizontal scroll past that', () => {
+    const cards = Array.from({ length: 12 }, (_, i) => c('5', i % 2 === 0 ? 'hearts' : 'spades'))
+    const cardWidth = 40
+    const { container } = render(<DiscardPileView cards={cards} cardWidth={cardWidth} />)
+    const row = container.querySelector('.discard-fan') as HTMLElement
+    expect(row.className).toMatch(/overflow-x-auto/)
+    expect(row.style.width).toBe(`${discardFanWidth(cardWidth, 9)}px`)
+    expect(container.querySelectorAll('.group').length).toBe(12)
+  })
+
+  it('does not show a scrollbar class on the discard fan', () => {
+    const cards = Array.from({ length: 12 }, () => c('8', 'clubs'))
+    const { container } = render(<DiscardPileView cards={cards} cardWidth={40} />)
+    const row = container.querySelector('.discard-fan') as HTMLElement
+    expect(row.className).toMatch(/discard-fan/)
+    expect(row.className).not.toMatch(/scrollbar/)
   })
 })

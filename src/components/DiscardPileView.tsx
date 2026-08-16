@@ -1,42 +1,45 @@
-import { useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import type { CardModel } from '../types/game'
 import { AnimatedCard } from './AnimatedCard'
 
 export const DISCARD_CARD_WIDTH = 64
-/** Fraction of each card's width that the next card overlaps — lower = wider fan / more of each card visible. */
-const OVERLAP_RATIO = 0.48
+/** How many cards fit in the visible window before older ones hide to the left. */
+export const DISCARD_VISIBLE_CARDS = 9
+/** Fraction of each card's width covered by the next — constant so the 9-card window stays readable. */
+export const DISCARD_OVERLAP_RATIO = 0.55
 /**
  * Max pointer travel (px) between pointerdown and the matching click for a
  * gesture to still count as a "tap" that toggles selection. Anything past
- * this is treated as a scroll/drag through the pile instead, so browsing
- * the fanned spread (e.g. a trackpad/touch swipe, or a click-drag on the
- * scrollbar) never gets misread as a card selection.
+ * this is treated as a scroll/drag through the pile instead.
  */
 const CLICK_DRAG_THRESHOLD_PX = 6
 
+/** Visible slot width for `count` cards (capped at {@link DISCARD_VISIBLE_CARDS}). */
+export function discardFanWidth(cardWidth: number, count: number): number {
+  const n = Math.max(0, Math.min(DISCARD_VISIBLE_CARDS, count))
+  if (n <= 1) return Math.round(cardWidth)
+  const peek = cardWidth * (1 - DISCARD_OVERLAP_RATIO)
+  return Math.round(cardWidth + (n - 1) * peek)
+}
+
 /**
- * Renders the ENTIRE discard pile as a fanned spread (items 3 & 4 of the
- * original animation spec) instead of just the top card, since Canasta
- * requires picking up the whole pile and the full history matters.
- *
- * Ordering: `cards` is oldest-first / most-recent-last (matching how the
- * store appends new discards to the end of the array). The Canasta "Top
- * Touch" rule cares about the LAST card thrown down, so that card - the
- * final one in the array - is rendered as the most exposed/topmost card in
- * the fan (highest z-index, fully visible) and carries the "PICK-UP" badge.
- * Earlier cards fan out behind/underneath it in play order.
+ * Renders the ENTIRE discard pile as a fanned spread. Oldest is left / newest
+ * is right (FIFO). At most {@link DISCARD_VISIBLE_CARDS} cards fit in the
+ * slot; older cards hide to the left and the fan scrolls horizontally with
+ * no scrollbar. The view pins to the latest card whenever the top changes.
  *
  * Once a Top Touch is in progress, any card in the pile becomes clickable:
  * clicking toggles that card alone in/out of the meld candidate set (the
  * top/most-recent card is always included and cannot be deselected).
- * Selected cards get the same ring treatment used for selected hand cards.
  *
- * Hovering a card gives it a gentle in-place "lift" (slight scale + upward
- * translate + shadow) on an inner visual wrapper so FLIP measurement stays
- * stable.
+ * Hover must NOT scale, translate, or filter (drop-shadow) these cards —
+ * that clips the face. Highlight with a ring only.
  */
 export function DiscardPileView({
   cards,
+  cardWidth = DISCARD_CARD_WIDTH,
+  maxWidth,
+  showBadge = true,
   onTopCardClick,
   topCardInteractive = false,
   topTouchInProgress = false,
@@ -44,6 +47,12 @@ export function DiscardPileView({
   onToggleDiscardCard,
 }: {
   cards: CardModel[]
+  /** Face width; defaults to {@link DISCARD_CARD_WIDTH}. Scaled down on phones. */
+  cardWidth?: number
+  /** Optional ceiling so a 9-card window cannot eat the hand on tiny docks. */
+  maxWidth?: number
+  /** PICK-UP label on the top card. Off when labels would collide with overlays. */
+  showBadge?: boolean
   /** Fires when the most-recent (top) card is clicked - begins a Top Touch (item 5). */
   onTopCardClick?: () => void
   /** Whether the top card is currently clickable (i.e. it's the local player's draw phase). */
@@ -55,30 +64,46 @@ export function DiscardPileView({
   /** Fires with a card's id when it's clicked during an in-progress Top Touch. */
   onToggleDiscardCard?: (cardId: string) => void
 }) {
-  const overlapPx = DISCARD_CARD_WIDTH * OVERLAP_RATIO
+  const overlapPx = cardWidth * DISCARD_OVERLAP_RATIO
+  const idealWidth = discardFanWidth(cardWidth, cards.length)
+  const fanCap = Math.round(maxWidth != null ? Math.min(maxWidth, idealWidth) : idealWidth)
+  const contentWidth =
+    cards.length <= 1 ? cardWidth : cardWidth + (cards.length - 1) * (cardWidth - overlapPx)
+  const needsHScroll = contentWidth > fanCap + 0.5
   const selectedSet = new Set(selectedDiscardIds)
+  const topCard = cards[cards.length - 1]
+  const topId = topCard?.id
 
-  // Tracks the pointer's down position and whether it has since travelled
-  // past the drag threshold, at the row level rather than per-card - a
-  // scroll/drag gesture routinely moves the pointer off whichever card it
-  // started on, so listening on individual cards would lose track of it.
-  // Native scrolling (wheel, trackpad, touch swipe, scrollbar drag) is left
-  // completely untouched - this only ever reads pointer positions, never
-  // calls `preventDefault` or captures the pointer, so it can't interfere
-  // with it.
+  const scrollerRef = useRef<HTMLDivElement>(null)
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null)
+  const scrollAtDown = useRef(0)
   const wasDrag = useRef(false)
 
-  function handleRowPointerDown(e: React.PointerEvent) {
+  useLayoutEffect(() => {
+    const el = scrollerRef.current
+    if (!el || !needsHScroll) return
+    el.scrollLeft = el.scrollWidth
+  }, [topId, cards.length, needsHScroll, fanCap])
+
+  function handleRowPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     pointerDownAt.current = { x: e.clientX, y: e.clientY }
+    scrollAtDown.current = scrollerRef.current?.scrollLeft ?? 0
     wasDrag.current = false
+    if (needsHScroll && e.pointerType === 'mouse') {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    }
   }
 
-  function handleRowPointerMove(e: React.PointerEvent) {
+  function handleRowPointerMove(e: React.PointerEvent<HTMLDivElement>) {
     const start = pointerDownAt.current
     if (!start) return
-    const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y)
-    if (dist > CLICK_DRAG_THRESHOLD_PX) wasDrag.current = true
+    const dx = e.clientX - start.x
+    const dist = Math.hypot(dx, e.clientY - start.y)
+    if (dist <= CLICK_DRAG_THRESHOLD_PX) return
+    wasDrag.current = true
+    if (needsHScroll && e.pointerType === 'mouse' && scrollerRef.current) {
+      scrollerRef.current.scrollLeft = scrollAtDown.current - dx
+    }
   }
 
   function handleRowPointerEnd() {
@@ -86,95 +111,91 @@ export function DiscardPileView({
   }
 
   if (cards.length === 0) {
-    const emptyH = Math.round(DISCARD_CARD_WIDTH * 1.4)
+    const emptyH = Math.round(cardWidth * 1.4)
     return (
       <div
-        className="flex items-center justify-center rounded-lg border-2 border-dashed border-white/20 text-[10px] text-white/40"
-        style={{ width: DISCARD_CARD_WIDTH, height: emptyH }}
-      >
-        empty
-      </div>
+        className="rounded-lg border-2 border-dashed border-white/20"
+        style={{ width: cardWidth, height: emptyH }}
+        aria-label="Discard pile empty"
+      />
     )
   }
 
   const topIndex = cards.length - 1
 
   return (
-    // No visible scrollbar — fan uses the flex middle; scrolls only if the pile is huge.
-    <div
-      className="discard-fan flex max-w-full items-end overflow-x-auto px-0.5 pb-0 pt-6 sm:pt-7"
-      onPointerDown={handleRowPointerDown}
-      onPointerMove={handleRowPointerMove}
-      onPointerUp={handleRowPointerEnd}
-      onPointerCancel={handleRowPointerEnd}
-    >
-      {cards.map((card, i) => {
-        const isMostRecent = i === topIndex
-        const isSelected = topTouchInProgress && selectedSet.has(card.id)
-        const clickableToBegin = isMostRecent && topCardInteractive && !!onTopCardClick
-        const clickableToToggle = topTouchInProgress && !!onToggleDiscardCard
-        const clickable = clickableToBegin || clickableToToggle
-        const action = clickableToToggle
-          ? () => onToggleDiscardCard!(card.id)
-          : clickableToBegin
-            ? onTopCardClick
+    <div className="relative shrink-0" style={{ width: fanCap, maxWidth: fanCap }}>
+      {needsHScroll && (
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 z-10 w-5 bg-gradient-to-r from-black/45 to-transparent"
+          aria-hidden
+        />
+      )}
+      <div
+        ref={scrollerRef}
+        className={`discard-fan flex items-end p-0 leading-none ${
+          needsHScroll ? 'overflow-x-auto overflow-y-hidden' : 'overflow-hidden'
+        }`}
+        style={{ width: fanCap, maxWidth: fanCap, touchAction: needsHScroll ? 'pan-x' : 'manipulation' }}
+        onPointerDown={handleRowPointerDown}
+        onPointerMove={handleRowPointerMove}
+        onPointerUp={handleRowPointerEnd}
+        onPointerCancel={handleRowPointerEnd}
+      >
+        {cards.map((card, i) => {
+          const isMostRecent = i === topIndex
+          const isSelected = topTouchInProgress && selectedSet.has(card.id)
+          const clickableToBegin = isMostRecent && topCardInteractive && !!onTopCardClick
+          const clickableToToggle = topTouchInProgress && !!onToggleDiscardCard
+          const clickable = clickableToBegin || clickableToToggle
+          const action = clickableToToggle
+            ? () => onToggleDiscardCard!(card.id)
+            : clickableToBegin
+              ? onTopCardClick
+              : undefined
+          const handleClick = action
+            ? () => {
+                if (wasDrag.current) return
+                action()
+              }
             : undefined
-        // Only actually fire the action if this "click" wasn't the tail end
-        // of a scroll/drag gesture (see `wasDrag` above) - a genuine tap
-        // toggles selection, a swipe/drag through the pile does nothing.
-        const handleClick = action
-          ? () => {
-              if (wasDrag.current) return
-              action()
-            }
-          : undefined
-        return (
-          // Outer wrapper is a `group` so hover can raise z-index (stacking
-          // only - does NOT affect layout/getBoundingClientRect) while the
-          // actual scale/translate lift lives on AnimatedCard's INNER
-          // visual wrapper via `wrapperClassName`. Putting those transforms
-          // on this outer node used to make every re-render-while-hovered
-          // look like a FLIP move, which hid the whole discard pile.
-          <div
-            key={card.id}
-            className={`group relative shrink-0 hover:z-40 ${clickable ? 'cursor-pointer' : ''}`}
-            style={{ marginLeft: i === 0 ? 0 : -overlapPx, zIndex: isSelected ? 30 + i : i }}
-            onClick={handleClick}
-            role={clickable ? 'button' : undefined}
-            title={
-              clickableToToggle
-                ? isMostRecent
-                  ? 'Top card is required for Top Touch'
-                  : isSelected
-                    ? 'Tap to remove this card from the Top Touch selection'
-                    : 'Tap to add this card to the Top Touch selection'
-                : clickableToBegin
-                  ? 'Tap to Top Touch this card'
-                  : undefined
-            }
-          >
-            <AnimatedCard
-              flipId={card.id}
-              rank={card.rank}
-              suit={card.suit}
-              width={DISCARD_CARD_WIDTH}
-              selected={isSelected}
-              liftOnSelect={false}
-              // Selection/hover lift lives on this inner wrapper (with room in
-              // pt-14) so Card's default -translate-y-3 does not clip the top
-              // edge under overflow-x-auto.
-              wrapperClassName={`origin-bottom transition-transform duration-150 ease-out group-hover:-translate-y-2 group-hover:scale-[1.12] group-hover:drop-shadow-xl ${
-                isSelected ? '-translate-y-2' : ''
-              }`}
-            />
-            {isMostRecent && (
-              <span className="pointer-events-none absolute -top-6 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-400 px-1.5 py-0.5 text-[8px] font-bold leading-none text-amber-950 shadow ring-1 ring-amber-200">
-                PICK-UP
-              </span>
-            )}
-          </div>
-        )
-      })}
+          return (
+            <div
+              key={card.id}
+              className={`group relative block shrink-0 leading-none hover:z-40 ${clickable ? 'cursor-pointer' : ''}`}
+              style={{ marginLeft: i === 0 ? 0 : -overlapPx, zIndex: isSelected ? 30 + i : i }}
+              onClick={handleClick}
+              role={clickable ? 'button' : undefined}
+              title={
+                clickableToToggle
+                  ? isMostRecent
+                    ? 'Top card is required for Top Touch'
+                    : isSelected
+                      ? 'Tap to remove this card from the Top Touch selection'
+                      : 'Tap to add this card to the Top Touch selection'
+                  : clickableToBegin
+                    ? 'Tap to Top Touch this card'
+                    : undefined
+              }
+            >
+              <AnimatedCard
+                flipId={card.id}
+                rank={card.rank}
+                suit={card.suit}
+                width={cardWidth}
+                selected={isSelected}
+                liftOnSelect={false}
+                wrapperClassName={clickable ? 'group-hover:ring-2 group-hover:ring-amber-300/90' : ''}
+              />
+              {showBadge && isMostRecent && (
+                <span className="pointer-events-none absolute -top-6 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-400 px-1.5 py-0.5 text-[8px] font-bold leading-none text-amber-950 shadow ring-1 ring-amber-200">
+                  PICK-UP
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

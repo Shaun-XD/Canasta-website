@@ -370,6 +370,145 @@ describe('attemptMeldAction (the unified "Meld" action - items 3, 5 & 8)', () =>
     expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'])
     expect(result.hand).toEqual([])
   })
+
+  it('creates a new Set from three discard cards alone (no hand cards required)', () => {
+    const team = makeTeam('team-a')
+    const discardPile = [c('K', 'diamonds'), c('4', 'hearts'), c('4', 'spades'), c('4', 'clubs')]
+    const result = attemptMeldAction({
+      hand: [c('3', 'hearts')],
+      team,
+      selectedHandCardIds: [],
+      targetMeldId: null,
+      topTouch: {
+        discardPile,
+        selectedDiscardIds: [discardPile[1].id, discardPile[2].id, discardPile[3].id],
+      },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.kind).toBe('new-meld')
+    expect(result.meld.type).toBe('set')
+    expect(result.meld.rank).toBe('4')
+    expect(result.meld.slots.length).toBe(3)
+    expect(result.usedDiscardCards).toHaveLength(3)
+    expect(result.hand).toHaveLength(1)
+  })
+
+  it('creates a new Sequence from three discard cards alone', () => {
+    const team = makeTeam('team-a')
+    const discardPile = [c('4', 'hearts'), c('5', 'hearts'), c('6', 'hearts')]
+    const result = attemptMeldAction({
+      hand: [c('3', 'clubs')],
+      team,
+      selectedHandCardIds: [],
+      targetMeldId: null,
+      topTouch: { discardPile, selectedDiscardIds: discardPile.map((card) => card.id) },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.kind).toBe('new-meld')
+    expect(result.meld.type).toBe('sequence')
+    expect(result.usedDiscardCards).toHaveLength(3)
+  })
+
+  it('creates a new Sequence from four discard cards alone', () => {
+    const team = makeTeam('team-a')
+    const discardPile = [c('4', 'spades'), c('5', 'spades'), c('6', 'spades'), c('7', 'spades')]
+    const result = attemptMeldAction({
+      hand: [],
+      team,
+      selectedHandCardIds: [],
+      targetMeldId: null,
+      topTouch: { discardPile, selectedDiscardIds: discardPile.map((card) => card.id) },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['4', '5', '6', '7'])
+    expect(result.usedDiscardCards).toHaveLength(4)
+  })
+
+  it('mixes 1 discard + 2 hand cards into a new Set', () => {
+    const team = makeTeam('team-a')
+    const hand = [c('Q', 'hearts'), c('Q', 'spades')]
+    const discardPile = [c('3', 'diamonds'), c('Q', 'clubs')]
+    const result = attemptMeldAction({
+      hand,
+      team,
+      selectedHandCardIds: hand.map((card) => card.id),
+      targetMeldId: null,
+      topTouch: { discardPile, selectedDiscardIds: [discardPile[1].id] },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.meld.type).toBe('set')
+    expect(result.meld.slots.length).toBe(3)
+    expect(result.usedDiscardCards).toHaveLength(1)
+    expect(result.hand).toEqual([])
+  })
+
+  it('appends several discard cards onto an existing sequence even if selected high-then-low', () => {
+    const built = buildSequence([c('5', 'spades'), c('6', 'spades'), c('7', 'spades')], 'team-a')
+    if (!built.ok) throw new Error('setup failed')
+    const eight = c('8', 'spades')
+    const nine = c('9', 'spades')
+    const ten = c('10', 'spades')
+    const team: Team = { ...makeTeam('team-a'), melds: [built.meld] }
+    const discardPile = [eight, nine, ten]
+    const result = attemptMeldAction({
+      hand: [],
+      team,
+      selectedHandCardIds: [],
+      targetMeldId: built.meld.id,
+      topTouch: { discardPile, selectedDiscardIds: discardPile.map((card) => card.id) },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.kind).toBe('append')
+    expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['5', '6', '7', '8', '9', '10'])
+    expect(result.usedDiscardCards).toHaveLength(3)
+  })
+
+  it('appends several discard cards onto an existing set', () => {
+    const existing = buildSet([c('K', 'hearts'), c('K', 'spades'), c('K', 'clubs')], 'team-a')
+    if (!existing.ok) throw new Error('setup failed')
+    const team: Team = { ...makeTeam('team-a'), melds: [existing.meld] }
+    const discardPile = [c('3', 'diamonds'), c('K', 'diamonds'), c('K', 'hearts')]
+    const result = attemptMeldAction({
+      hand: [],
+      team,
+      selectedHandCardIds: [],
+      targetMeldId: existing.meld.id,
+      topTouch: {
+        discardPile,
+        selectedDiscardIds: [discardPile[1].id, discardPile[2].id],
+      },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.kind).toBe('append')
+    expect(result.meld.slots.length).toBe(5)
+  })
+
+  it('mixes hand and discard cards when appending to an existing meld', () => {
+    const built = buildSequence([c('5', 'hearts'), c('6', 'hearts'), c('7', 'hearts')], 'team-a')
+    if (!built.ok) throw new Error('setup failed')
+    const team: Team = { ...makeTeam('team-a'), melds: [built.meld] }
+    const eight = c('8', 'hearts')
+    const nine = c('9', 'hearts')
+    const discardPile = [c('3', 'clubs'), nine]
+    const result = attemptMeldAction({
+      hand: [eight],
+      team,
+      selectedHandCardIds: [eight.id],
+      targetMeldId: built.meld.id,
+      topTouch: { discardPile, selectedDiscardIds: [nine.id] },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.kind).toBe('append')
+    expect(result.meld.slots.map((s) => s.slotRank)).toEqual(['5', '6', '7', '8', '9'])
+    expect(result.hand).toEqual([])
+  })
 })
 
 describe('performDiscard', () => {

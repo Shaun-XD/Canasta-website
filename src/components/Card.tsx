@@ -101,8 +101,8 @@ export const Card = memo(function Card({
 
   // Decorative cards (no onClick) must be a <div>, not a <button>. Nesting a
   // button inside the stock pile's outer <button> breaks clicks in browsers.
-  const classNames = `relative shrink-0 overflow-hidden rounded-[8px] shadow-md transition-transform duration-150 ease-out ${
-    showFace ? 'box-border border border-[#5b7c99] bg-[#faf8f4]' : ''
+  const classNames = `relative block shrink-0 overflow-hidden rounded-[8px] shadow-md transition-transform duration-150 ease-out box-border border ${
+    showFace ? 'border-[#5b7c99] bg-[#faf8f4]' : 'border-transparent'
   } ${onClick ? 'cursor-pointer hover:-translate-y-1' : 'cursor-default'} ${
     selected ? `ring-2 ring-yellow-300 ${liftOnSelect ? '-translate-y-3' : ''}` : ''
   } ${className}`

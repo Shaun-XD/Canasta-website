@@ -32,7 +32,7 @@ export function RoundEndModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-emerald-950 p-6 shadow-2xl">
+      <div className="flex max-h-[min(90dvh,36rem)] w-full max-w-lg flex-col overflow-y-auto rounded-2xl border border-white/10 bg-emerald-950 p-5 shadow-2xl sm:p-6">
         <h2 className="text-center text-2xl font-bold text-white">
           {gameOverTeamId ? 'Match Complete!' : 'Round Complete'}
         </h2>

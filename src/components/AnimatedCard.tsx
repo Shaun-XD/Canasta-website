@@ -42,7 +42,7 @@ export function AnimatedCard({ flipId, isNew = false, style, wrapperClassName = 
     // margins stack every card on top of each other (only the top card's face
     // stays readable). The outer node is also the FLIP measure target and
     // must not carry hover transforms (those go on the inner wrapper).
-    <div ref={ref} style={style} className="inline-block shrink-0">
+    <div ref={ref} style={style} className="block shrink-0 leading-none">
       <div className={`rounded-[8px] ${isNew ? 'animate-card-glow' : ''} ${wrapperClassName}`}>
         <Card {...cardProps} />
       </div>

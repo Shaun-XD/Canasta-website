@@ -85,24 +85,27 @@ export function Landing() {
   }
 
   return (
-    <div className="felt-bg flex min-h-screen flex-col items-center justify-center px-4 py-10">
-      <div className="mb-10 flex items-center gap-4">
+    <div className="felt-bg page-scroll flex flex-col items-center px-4 py-6 sm:justify-center sm:py-10">
+      <div className="mb-6 flex items-center gap-3 sm:mb-10 sm:gap-4">
         <div className="flex gap-1 -rotate-6">
-          <Card rank="A" suit="spades" width={54} />
-          <Card rank="K" suit="hearts" width={54} className="rotate-6" />
+          <Card rank="A" suit="spades" width={48} />
+          <Card rank="K" suit="hearts" width={48} className="rotate-6" />
         </div>
         <div className="text-left">
-          <h1 className="text-5xl font-black tracking-tight text-white drop-shadow">
+          <h1 className="text-4xl font-black tracking-tight text-white drop-shadow sm:text-5xl">
             Canasta
           </h1>
           <p className="text-sm font-medium text-white/60">Online multiplayer · 1v1 or 2v2</p>
+          <p className="mt-1 text-[11px] font-medium text-yellow-200/70 sm:hidden">
+            On a phone, rotate to landscape to play.
+          </p>
           <p className="mt-1.5 text-base font-bold uppercase tracking-[0.38em] text-white drop-shadow">
             By AVK
           </p>
         </div>
       </div>
 
-      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-black/25 p-6 shadow-2xl backdrop-blur">
+      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-black/25 p-5 shadow-2xl backdrop-blur sm:p-6">
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-white/60">
           Your name
         </label>
@@ -276,7 +279,7 @@ export function Landing() {
         )}
       </div>
 
-      <p className="mt-8 max-w-md text-center text-xs text-white/40">
+      <p className="mt-6 max-w-md pb-4 text-center text-xs text-white/40 sm:mt-8">
         Online mode syncs 2 or 4 devices through the FastAPI backend. Solo fills empty seats with bots
         for local practice.
       </p>

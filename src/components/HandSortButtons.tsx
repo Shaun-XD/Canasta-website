@@ -16,7 +16,7 @@ export function HandSortButtons({
   onSortRank: () => void
 }) {
   return (
-    <div className="pointer-events-auto flex flex-col gap-2" role="group" aria-label="Sort hand">
+    <div className="hand-sort-buttons pointer-events-auto flex flex-col gap-2" role="group" aria-label="Sort hand">
       <SortButton
         label="Sort by suit (sequences)"
         active={activeMode === 'suit'}
@@ -53,7 +53,7 @@ function SortButton({
       aria-label={label}
       aria-pressed={active}
       onClick={onClick}
-      className={`flex h-14 w-14 items-center justify-center rounded-xl bg-white p-1 shadow-md transition active:scale-95 sm:h-16 sm:w-16 ${
+      className={`flex h-11 w-11 items-center justify-center rounded-xl bg-white p-1 shadow-md transition active:scale-95 sm:h-16 sm:w-16 ${
         active ? 'ring-2 ring-yellow-300 ring-offset-1 ring-offset-emerald-950' : 'hover:brightness-105'
       }`}
     >

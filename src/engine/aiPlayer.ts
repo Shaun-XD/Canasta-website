@@ -10,6 +10,7 @@ import {
   meldUsesAceHigh,
   type AppendContext,
 } from './meldValidation'
+import { attemptMeldAction } from './turnEngine'
 import { cardPointValue, RANK_BY_ORDER, RANK_ORDER, sequenceRankOrder } from './cardValues'
 
 /**
@@ -203,6 +204,29 @@ function teamStubFromCtx(ctx: AiPlayContext): Team {
 
 function appendCtxFromAi(ctx: AiPlayContext, handSize: number): AppendContext {
   return { team: teamStubFromCtx(ctx), handSize }
+}
+
+/**
+ * True when the selected discard cards (always including the top) can all
+ * be appended onto `meld` in some order — including sequential extensions
+ * such as 8 then 9 onto 5-6-7, which fail a naive per-card `canAppend` check
+ * against the pre-append meld.
+ */
+function canAppendDiscardSelection(
+  meld: Meld,
+  allMelds: Meld[],
+  discardPile: CardModel[],
+  selectedDiscardIds: string[],
+  ctx: AiPlayContext,
+): boolean {
+  const result = attemptMeldAction({
+    hand: [],
+    team: { ...teamStubFromCtx(ctx), melds: allMelds },
+    selectedHandCardIds: [],
+    targetMeldId: meld.id,
+    topTouch: { discardPile, selectedDiscardIds },
+  })
+  return result.ok
 }
 
 /** Count visible copies of `rank` on public melds + discard (not private hands). */
@@ -1188,9 +1212,10 @@ export function planAiDraw(
     const selectedDiscardIds = selectedDiscard.map((c) => c.id)
     const remainderPile = discardPile.filter((c) => c.id !== deep.id && c.id !== top.id)
 
-    // Both cards append to the same existing meld (rare but strong).
+    // Both cards append to the same existing meld (including sequential
+    // extensions that only become legal after the first card lands).
     for (const meld of melds) {
-      if (!canAppendToMeld(meld, top) || !canAppendToMeld(meld, deep)) continue
+      if (!canAppendDiscardSelection(meld, melds, discardPile, selectedDiscardIds, ctx)) continue
       tryPlan({
         handCardIds: [],
         selectedDiscardIds,
@@ -1236,6 +1261,19 @@ export function planAiDraw(
     const selectedDiscardIds = selectedDiscard.map((c) => c.id)
     const remainderPile = discardPile.slice(0, discardPile.length - run)
 
+    for (const meld of melds) {
+      if (!canAppendDiscardSelection(meld, melds, discardPile, selectedDiscardIds, ctx)) continue
+      tryPlan({
+        handCardIds: [],
+        selectedDiscardIds,
+        targetMeldId: meld.id,
+        kind: 'append',
+        meldCards: selectedDiscard,
+        remainderPile,
+        targetMeld: meld,
+      })
+    }
+
     const handCombos = enumerateHandCombos(hand, 4)
     for (const handCards of handCombos) {
       const group = [...selectedDiscard, ...handCards]
@@ -1263,12 +1301,84 @@ export function planAiDraw(
     }
   }
 
+  // --- 3+ discard cards including top, not necessarily contiguous ---
+  // Covers "all from the pile" sets (three 4s with junk in between) that the
+  // pair loop (top + one deep) and contiguous-run loop would miss.
+  for (const extras of enumerateDiscardExtras(discardPile.slice(0, -1), 2, 4)) {
+    const selectedDiscard = [...extras, top]
+    const selectedDiscardIds = selectedDiscard.map((c) => c.id)
+    const used = new Set(selectedDiscardIds)
+    const remainderPile = discardPile.filter((c) => !used.has(c.id))
+
+    for (const meld of melds) {
+      if (!canAppendDiscardSelection(meld, melds, discardPile, selectedDiscardIds, ctx)) continue
+      tryPlan({
+        handCardIds: [],
+        selectedDiscardIds,
+        targetMeldId: meld.id,
+        kind: 'append',
+        meldCards: selectedDiscard,
+        remainderPile,
+        targetMeld: meld,
+      })
+    }
+
+    if (selectedDiscard.length < 3) continue
+    if (buildSet(selectedDiscard, teamId).ok) {
+      tryPlan({
+        handCardIds: [],
+        selectedDiscardIds,
+        targetMeldId: null,
+        kind: 'set',
+        meldCards: selectedDiscard,
+        remainderPile,
+      })
+    }
+    if (buildSequence(selectedDiscard, teamId).ok) {
+      tryPlan({
+        handCardIds: [],
+        selectedDiscardIds,
+        targetMeldId: null,
+        kind: 'sequence',
+        meldCards: selectedDiscard,
+        remainderPile,
+      })
+    }
+  }
+
   const best = bestRef.current
   if (!best || best.score <= 0) return stockPlan
   if (best.source === 'top-touch' && !aiTopTouchPlaysTopCard(discardPile, best.selectedDiscardIds)) {
     return stockPlan
   }
   return best
+}
+
+/**
+ * Subsets of buried discard cards (oldest-first input) of size minSize..maxSize.
+ * Prefers cards nearest the top so a long pile does not explode combinatorially.
+ */
+function enumerateDiscardExtras(
+  othersOldestFirst: CardModel[],
+  minSize: number,
+  maxSize: number,
+  window = 8,
+): CardModel[][] {
+  const pool = othersOldestFirst.slice(Math.max(0, othersOldestFirst.length - window))
+  const out: CardModel[][] = []
+  const n = pool.length
+  const limit = Math.min(maxSize, n)
+  const rec = (start: number, acc: CardModel[]) => {
+    if (acc.length >= minSize && acc.length <= limit) out.push([...acc])
+    if (acc.length === limit) return
+    for (let i = start; i < n; i += 1) {
+      acc.push(pool[i])
+      rec(i + 1, acc)
+      acc.pop()
+    }
+  }
+  rec(0, [])
+  return out
 }
 
 /** Hand subsets of size 0..maxSize (capped) for Top Touch combo search. */

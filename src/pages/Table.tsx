@@ -5,7 +5,7 @@ import { PlayerAvatar } from '../components/PlayerAvatar'
 import { MiniCardStack } from '../components/MiniCardStack'
 import { Card } from '../components/Card'
 import { AnimatedCard } from '../components/AnimatedCard'
-import { DiscardPileView, DISCARD_CARD_WIDTH } from '../components/DiscardPileView'
+import { DiscardPileView, DISCARD_CARD_WIDTH, DISCARD_VISIBLE_CARDS, discardFanWidth } from '../components/DiscardPileView'
 import { PozzettoStacks } from '../components/PozzettoStacks'
 import { TurnBanner } from '../components/TurnBanner'
 import { TurnTimerBadge } from '../components/TurnTimerBadge'
@@ -19,21 +19,7 @@ import { sortHandByRank, sortHandBySuit } from '../lib/deck'
 import { evaluateShowEligibility, unmetShowConditions } from '../engine/showEligibility'
 import type { Player, Team } from '../types/game'
 import { meldCards } from '../types/game'
-
-const HAND_CARD_WIDTH = 78
-/** Deal size — spacing is calibrated so 13 cards define the squeeze baseline. */
-const HAND_BASE_COUNT = 13
-/** Visible strip per card at a full 13-card hand. */
-const HAND_COMFORT_PEEK = 48
-/** Floor when squeezing hands larger than 13 into the 13-card width. */
-const HAND_MIN_PEEK = 12
-/** Fixed rail for >13 squeeze = one full 13-card comfort fan. */
-const HAND_REF_WIDTH = HAND_CARD_WIDTH + (HAND_BASE_COUNT - 1) * HAND_COMFORT_PEEK
-/**
- * Max fan width when holding fewer than 13 (spread multiplier can grow the fan).
- * Caps how far apart cards get so a 2–3 card hand doesn't span the whole screen.
- */
-const HAND_MAX_FAN_WIDTH = HAND_CARD_WIDTH + (HAND_BASE_COUNT - 1) * Math.round(HAND_COMFORT_PEEK * 1.5)
+import { planHandFan, scaledHandCardWidth } from './tableLayout'
 
 export function Table() {
   const { roomId } = useParams()
@@ -71,6 +57,20 @@ export function Table() {
     void rejoinOnlineSession()
   }, [roomId, rejoinOnlineSession])
 
+  useEffect(() => {
+    const orientation = screen.orientation
+    void orientation?.lock('landscape').catch(() => {
+      /* Browser only allows this in an installed PWA or fullscreen. */
+    })
+    return () => {
+      try {
+        orientation?.unlock()
+      } catch {
+        /* not locked */
+      }
+    }
+  }, [])
+
   // Item 3: the stock pile is rendered as one generic face-down card (not a
   // per-card element), so a freshly-drawn card has no prior on-screen rect
   // to fly FROM. We capture the stock pile's rect at click time and seed it
@@ -78,7 +78,13 @@ export function Table() {
   // up as the origin once that card renders inside the hand.
   const stockRef = useRef<HTMLButtonElement>(null)
   const handRailRef = useRef<HTMLDivElement>(null)
-  const [handRailWidth, setHandRailWidth] = useState(HAND_MAX_FAN_WIDTH)
+  const [handRailWidth, setHandRailWidth] = useState(() =>
+    typeof window === 'undefined' ? 360 : Math.max(280, window.innerWidth - 32),
+  )
+  const [viewportHeight, setViewportHeight] = useState(() =>
+    typeof window === 'undefined' ? 800 : window.innerHeight,
+  )
+  const [menuOpen, setMenuOpen] = useState(false)
   const [hoveredHandId, setHoveredHandId] = useState<string | null>(null)
   /** Sync lock so pointerenter during reorder doesn't enlarge neighbor cards before React state catches up. */
   const isReorderingRef = useRef(false)
@@ -105,6 +111,15 @@ export function Table() {
   }, [])
 
   useEffect(() => {
+    if (!menuOpen) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [menuOpen])
+
+  useEffect(() => {
     if (lastActionError && lastActionError !== prevStoreErrorRef.current) {
       reportInvalidAction(lastActionError)
     }
@@ -119,7 +134,8 @@ export function Table() {
       // shrink-wrapped rail and the peek math fight each other into a tiny hand.
       const parent = el.parentElement
       const raw = parent?.clientWidth ?? el.clientWidth
-      setHandRailWidth(Math.max(HAND_REF_WIDTH, raw - 16))
+      setHandRailWidth(Math.max(0, raw - 16))
+      setViewportHeight(window.innerHeight)
     }
     measure()
     const ro = new ResizeObserver(measure)
@@ -271,8 +287,14 @@ export function Table() {
 
   function handleMeld() {
     if (topTouchInProgress) {
-      if (validSelectedCount === 0 && !selectedMeldId) {
-        return reportInvalidAction('Select hand cards or a meld group to combine with the top discard card.')
+      const discardCount = selectedDiscardIds.length
+      // Hand cards are optional. A legal new meld can be entirely from the
+      // discard pile (3+ including the top card), mixed with the hand, or
+      // appended onto an existing team meld.
+      if (!selectedMeldId && validSelectedCount + discardCount < 3) {
+        return reportInvalidAction(
+          'Select a legal meld: at least 3 cards from the discard pile and/or your hand (the top discard is required), or choose an existing meld to add onto.',
+        )
       }
       attemptMeld()
       return
@@ -302,88 +324,42 @@ export function Table() {
   const leftTeam = localTeam ?? room.teams[0]
   const rightTeam = opponentTeam ?? room.teams.find((t) => t.id !== leftTeam?.id)
 
-  // ≤13: fewer cards → larger peek (spreadMult = 13/count). >13: squeeze into
-  // the same width a 13-card comfort fan uses.
   const handCount = orderedLocalHand.length
-  const handPeek = (() => {
-    if (handCount <= 1) return HAND_CARD_WIDTH
-    if (handCount <= HAND_BASE_COUNT) {
-      const spreadMult = HAND_BASE_COUNT / handCount
-      // Wider base + multiplier so a short hand fans out clearly.
-      const desiredPeek = Math.min(HAND_CARD_WIDTH - 4, Math.round(HAND_COMFORT_PEEK * spreadMult))
-      const desiredWidth = HAND_CARD_WIDTH + (handCount - 1) * desiredPeek
-      // Only compress if the real viewport is narrower than that fan.
-      const room = Math.max(handRailWidth, HAND_REF_WIDTH)
-      const fitWidth = Math.min(desiredWidth, room, HAND_MAX_FAN_WIDTH)
-      if (fitWidth >= desiredWidth - 1) return desiredPeek
-      return Math.max(HAND_COMFORT_PEEK, (fitWidth - HAND_CARD_WIDTH) / (handCount - 1))
-    }
-    const fitWidth = Math.min(HAND_REF_WIDTH, handRailWidth)
-    return Math.max(HAND_MIN_PEEK, (fitWidth - HAND_CARD_WIDTH) / (handCount - 1))
-  })()
-  const handOverlap = HAND_CARD_WIDTH - handPeek
-  const handFanWidth =
-    handCount <= 1 ? HAND_CARD_WIDTH : HAND_CARD_WIDTH + (handCount - 1) * handPeek
+  const handCardWidth = scaledHandCardWidth(handRailWidth, viewportHeight)
+  const handFan = planHandFan(handCount, handRailWidth, handCardWidth)
+  const handPeek = handFan.peek
+  const handOverlap = handCardWidth - handPeek
+  const handFanWidth = handFan.fanWidth
+  const hubCardWidth = Math.round(
+    Math.min(DISCARD_CARD_WIDTH, Math.max(viewportHeight <= 540 ? 30 : 48, handCardWidth * 0.82)),
+  )
+  const meldCardWidthCap = Math.max(32, Math.round(handCardWidth * 0.86))
+  const discardFanMax = discardFanWidth(hubCardWidth, DISCARD_VISIBLE_CARDS)
 
   return (
-    <div className="felt-bg table-shell relative flex flex-col text-white">
+    <div className={`felt-bg table-shell relative flex flex-col text-white ${menuOpen ? 'table-menu-open' : ''}`}>
+      <div className="rotate-landscape-gate" role="dialog" aria-label="Rotate to landscape">
+        <div className="rotate-landscape-card">
+          <p className="text-lg font-bold text-white">Rotate your phone</p>
+          <p className="mt-1 text-sm text-white/70">Canasta is played in landscape.</p>
+        </div>
+      </div>
+
+      {menuOpen && (
+        <button
+          type="button"
+          className="table-menu-scrim"
+          aria-label="Close menu"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+
       <header className="table-topbar shrink-0">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold tracking-wide text-white/90">
-            Room <span className="font-mono text-yellow-300">{room.roomId}</span>
-          </p>
-          <p className="mt-0.5 truncate text-[11px] text-white/45 sm:hidden">
-            R{game.round} · {room.matchTargetScore} pts · {timerEnabled ? `${room.turnTimerSeconds}s` : 'no timer'}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-          <span className="hidden rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-white/55 ring-1 ring-white/10 sm:inline">
-            Round {game.round} · Target {room.matchTargetScore} ·{' '}
-            {timerEnabled ? `${room.turnTimerSeconds}s` : 'No timer'}
-          </span>
-          {timerEnabled && (
-            <button
-              type="button"
-              onClick={togglePauseTimer}
-              className={`action-btn action-btn-ghost !min-h-9 !min-w-0 !px-3 !py-1.5 !text-[11px] ${
-                isPaused ? '!bg-yellow-400 !text-emerald-950' : ''
-              }`}
-              title={isPaused ? 'Resume the turn timer for everyone' : 'Pause the turn timer for everyone'}
-            >
-              {isPaused ? 'Resume' : 'Pause'}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={exitToHome}
-            className="action-btn action-btn-danger !min-h-9 !min-w-0 !px-3 !py-1.5 !text-[11px]"
-            title="Exit to home — ends the game and clears session state"
-          >
-            Exit
-          </button>
-        </div>
-      </header>
+        <p className="table-topbar-room min-w-0 truncate text-xs font-semibold tracking-wide text-white/85">
+          <span className="font-mono text-yellow-300">{room.roomId}</span>
+        </p>
 
-      <div className="relative mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
-        <div className="pointer-events-none absolute right-1.5 top-1 z-30 flex flex-col items-end gap-1 sm:right-3">
-          <div className="pointer-events-auto rounded-lg bg-black/40 px-2 py-1.5 ring-1 ring-white/10 backdrop-blur-sm">
-            <p className="mb-1 text-right text-[8px] font-bold uppercase tracking-[0.14em] text-white/45">
-              Pozzetto
-            </p>
-            <PozzettoStacks
-              teams={room.teams}
-              localTeamId={localTeam?.id}
-              stackCounts={{
-                'team-a': game.pozzettoStacks['team-a']?.length ?? 0,
-                'team-b': game.pozzettoStacks['team-b']?.length ?? 0,
-              }}
-            />
-          </div>
-          <PozzettoActiveStatus teams={room.teams} localTeamId={localTeam?.id} />
-        </div>
-
-        {/* NORTH — teammate */}
-        <div className="flex shrink-0 justify-center">
+        <div className="table-topbar-north flex min-w-0 justify-center">
           {seating.north && (
             <SidePlayer
               player={seating.north}
@@ -394,13 +370,70 @@ export function Table() {
               highlight
               roleLabel={room.players.length === 2 ? 'Opponent' : 'Teammate'}
               stackOrientation="horizontal"
+              inHeader
             />
           )}
         </div>
 
+        <div className="table-topbar-end flex shrink-0 items-center gap-1.5">
+          <PozzettoStacks
+            compact
+            teams={room.teams}
+            localTeamId={localTeam?.id}
+            stackCounts={{
+              'team-a': game.pozzettoStacks['team-a']?.length ?? 0,
+              'team-b': game.pozzettoStacks['team-b']?.length ?? 0,
+            }}
+          />
+          <button
+              type="button"
+              className="table-menu-btn"
+              aria-label={menuOpen ? 'Close table menu' : 'Open table menu'}
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+        </div>
+      </header>
+
+      {menuOpen && (
+        <div className="table-menu-panel" role="dialog" aria-modal="true" aria-label="Table menu">
+          <p className="table-menu-kicker">Room {room.roomId}</p>
+          <p className="px-4 pb-2 text-[12px] text-white/60">
+            Round {game.round} · {room.matchTargetScore} pts ·{' '}
+            {timerEnabled ? `${room.turnTimerSeconds}s` : 'No timer'}
+          </p>
+          {timerEnabled && (
+            <button
+              type="button"
+              onClick={() => {
+                togglePauseTimer()
+                setMenuOpen(false)
+              }}
+            >
+              {isPaused ? 'Resume timer' : 'Pause timer'}
+            </button>
+          )}
+          <button
+            type="button"
+            className="table-menu-exit"
+            onClick={() => {
+              setMenuOpen(false)
+              exitToHome()
+            }}
+          >
+            Exit
+          </button>
+        </div>
+      )}
+
+      <div className="relative mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
         {/* WEST | MELDS (grow) | EAST — melds own the vertical space */}
-        <div className="melds-row flex min-h-0 flex-[1_1_0] items-stretch gap-1.5 sm:gap-2">
-          <div className="flex w-[3.75rem] shrink-0 flex-col items-center justify-center sm:w-[5.75rem]">
+        <div className="melds-row relative flex min-h-0 flex-[1_1_0] items-stretch gap-1 sm:gap-1.5">
+          <div className="side-seat side-seat-west flex w-11 shrink-0 flex-col items-center justify-center">
             {seating.west && (
               <SidePlayer
                 player={seating.west}
@@ -443,6 +476,7 @@ export function Table() {
                       onSelectMeld={(id) => selectMeldTarget(selectedMeldId === id ? null : id)}
                       canModify={isLocalTurn && isLocalSide}
                       onMoveWild={moveWildInMeld}
+                      maxCardWidth={meldCardWidthCap}
                     />
                   </div>
                 </div>
@@ -450,7 +484,7 @@ export function Table() {
             })}
           </section>
 
-          <div className="flex w-[3.75rem] shrink-0 flex-col items-center justify-center sm:w-[5.75rem]">
+          <div className="side-seat side-seat-east flex w-11 shrink-0 flex-col items-center justify-center">
             {seating.east && (
               <SidePlayer
                 player={seating.east}
@@ -466,9 +500,9 @@ export function Table() {
           </div>
         </div>
 
-        {/* Play hub — flat minimal strip */}
-        <section className="play-hub relative mx-auto flex w-full max-w-5xl shrink-0 flex-col gap-1 px-2 py-1 sm:px-3 sm:py-1.5">
-          <div className="flex w-full items-center justify-center">
+        {/* Play dock — landscape: stock | discard | hand | sort | actions */}
+        <section className="play-hub play-dock relative mx-auto w-full max-w-[90rem] shrink-0 px-2 py-1 sm:px-3 sm:py-1.5">
+          <div className="play-dock-banner">
             <TurnBanner
               playerName={activePlayer?.name ?? ''}
               phase={game.turn.phase}
@@ -479,196 +513,181 @@ export function Table() {
             />
           </div>
 
-          <div className="flex w-full items-end gap-2.5 sm:gap-3">
-            <div className="flex shrink-0 flex-col items-center gap-0.5">
+          <div className="play-dock-row">
+            <div className="play-dock-local">
+              <div className="flex items-center gap-1.5 rounded-full bg-black/35 px-2 py-1 ring-1 ring-white/10 backdrop-blur-sm">
+                {seating.south && (
+                  <PlayerAvatar
+                    name={seating.south.name}
+                    color={seating.south.avatarColor}
+                    connectionStatus={seating.south.connectionStatus}
+                    size={36}
+                  />
+                )}
+                <p className="play-dock-local-name max-w-[4.5rem] truncate pr-0.5 text-sm font-semibold tracking-wide sm:max-w-[7rem]">
+                  {seating.south?.name}
+                </p>
+              </div>
+              {isLocalTurn && remainingSeconds != null && (
+                <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
+              )}
+            </div>
+
+            <div className="play-dock-piles">
               <button
                 ref={stockRef}
                 type="button"
                 disabled={!isDrawPhase || stockDepleted || topTouchInProgress}
                 onClick={handleDrawFromStock}
-                className="rounded-lg transition enabled:hover:-translate-y-0.5 enabled:focus-visible:outline enabled:focus-visible:outline-2 enabled:focus-visible:outline-offset-2 enabled:focus-visible:outline-yellow-300 disabled:opacity-45"
+                className="stock-btn transition enabled:hover:-translate-y-0.5 enabled:focus-visible:outline enabled:focus-visible:outline-2 enabled:focus-visible:outline-offset-2 enabled:focus-visible:outline-yellow-300 disabled:opacity-45"
                 title="Draw from stock"
                 data-flip-anchor="stock"
                 aria-label={`Draw from stock (${game.stock.length} cards)`}
               >
-                <Card faceDown width={DISCARD_CARD_WIDTH} />
+                <Card faceDown width={hubCardWidth} />
               </button>
-              <span className="text-[10px] font-semibold text-white/55">Stock ({game.stock.length})</span>
-            </div>
 
-            <div
-              className="flex min-w-0 flex-1 flex-col items-center gap-0.5"
-              data-flip-anchor="discard"
-            >
-              <DiscardPileView
-                cards={game.discardPile.cards.filter((c) => !meldedCardIds.has(c.id))}
-                topCardInteractive={isDrawPhase && !topTouchInProgress}
-                onTopCardClick={handleBeginTopTouch}
-                topTouchInProgress={topTouchInProgress}
-                selectedDiscardIds={selectedDiscardIds}
-                onToggleDiscardCard={toggleDiscardPileCard}
-              />
-              <span className="text-[10px] font-semibold text-white/55">
-                Discard ({game.discardPile.cards.length})
-              </span>
-            </div>
-
-            <div
-              key={feedback?.token ?? 'stable'}
-              className={`action-stack ml-auto flex w-[6.5rem] shrink-0 flex-col items-stretch gap-1 self-center sm:w-[7.25rem] ${
-                feedback ? 'animate-shake' : ''
-              }`}
-            >
-              <button
-                type="button"
-                disabled={!canDiscard}
-                onClick={discardSelected}
-                className="action-btn action-btn-danger action-btn-stack"
-              >
-                Discard
-              </button>
-              <button
-                type="button"
-                onClick={handleMeld}
-                className="action-btn action-btn-blue action-btn-stack"
-                title="Select hand cards (and optionally one of your team's melds above to append to or a natural card to swap in for a wild)"
-              >
-                {topTouchInProgress ? 'Meld Top' : 'Meld'}
-              </button>
-              <button
-                type="button"
-                disabled={!canDeclareShow}
-                onClick={declareShow}
-                className="action-btn action-btn-gold action-btn-stack"
-                title={showUnmetReasons.length > 0 ? showUnmetReasons.join(' ') : 'Declare Show and end the round'}
-              >
-                Declare Show
-              </button>
-            </div>
-          </div>
-
-          {isDrawPhase && !topTouchInProgress && topDiscard && (
-            <p className="mx-auto text-center text-[10px] leading-relaxed text-white/40">
-              Tap top discard to Top Touch.
-            </p>
-          )}
-          {topTouchInProgress && (
-            <div className="mx-auto flex w-full max-w-lg flex-col items-center gap-1.5 rounded-xl bg-amber-400/10 px-2.5 py-2 ring-1 ring-amber-300/30">
-              <p className="text-center text-[11px] font-medium leading-relaxed text-amber-100">
-                Top Touch — only the top card starts selected. Tap extra pile cards to include
-                them in the meld. The rest of the pile still comes to your hand.
-              </p>
-              <button type="button" onClick={cancelTopTouch} className="action-btn action-btn-ghost !min-h-8 !text-[11px]">
-                Cancel Top Touch
-              </button>
-            </div>
-          )}
-
-          {stockDepleted && isLocalTurn && (
-            <button
-              type="button"
-              onClick={forceSuddenDeathEndRound}
-              className="action-btn action-btn-danger mx-auto !min-h-9 !text-xs"
-              title="Stock is empty. If you cannot Top Touch AND immediately empty your hand with a legal Show this turn, the round must end now."
-            >
-              Stock empty — End Round
-            </button>
-          )}
-
-          {feedback && (
-            <p className="mx-auto mt-0.5 w-full max-w-xl rounded-xl bg-red-900/35 px-4 py-2 text-center text-sm font-medium leading-snug text-red-50/90 ring-1 ring-red-300/25 backdrop-blur-sm sm:text-[14px]">
-              {feedback.message}
-            </p>
-          )}
-          {!feedback && showUnmetReasons.length > 0 && isActionPhase && (
-            <p className="mx-auto max-w-xl text-center text-xs font-medium text-white/55">{showUnmetReasons.join(' ')}</p>
-          )}
-        </section>
-
-        {/* SOUTH — hand always centered; avatar overlays the left */}
-        <section className="relative flex w-full shrink-0 justify-center pb-0.5 pt-0">
-          <div className="pointer-events-auto absolute bottom-1 left-0 z-20 flex flex-col items-center gap-1 pl-0.5 sm:left-1 sm:pl-0">
-            <div className="flex items-center gap-2 rounded-full bg-black/35 px-2.5 py-1.5 ring-1 ring-white/10 backdrop-blur-sm">
-              {seating.south && (
-                <PlayerAvatar
-                  name={seating.south.name}
-                  color={seating.south.avatarColor}
-                  connectionStatus={seating.south.connectionStatus}
-                  size={40}
+              <div className="discard-slot shrink-0" data-flip-anchor="discard">
+                <DiscardPileView
+                  cards={game.discardPile.cards.filter((c) => !meldedCardIds.has(c.id))}
+                  cardWidth={hubCardWidth}
+                  maxWidth={discardFanMax}
+                  showBadge={false}
+                  topCardInteractive={isDrawPhase && !topTouchInProgress}
+                  onTopCardClick={handleBeginTopTouch}
+                  topTouchInProgress={topTouchInProgress}
+                  selectedDiscardIds={selectedDiscardIds}
+                  onToggleDiscardCard={toggleDiscardPileCard}
                 />
-              )}
-              <p className="max-w-[4.5rem] truncate pr-0.5 text-sm font-semibold tracking-wide sm:max-w-[7rem]">
-                {seating.south?.name}
-              </p>
-            </div>
-            {isLocalTurn && remainingSeconds != null && (
-              <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
-            )}
-          </div>
-
-          <div className="mx-auto flex w-full max-w-full items-end justify-center gap-2 px-1 sm:gap-2.5">
-            <div
-              ref={handRailRef}
-              className="hand-rail min-w-0 justify-center overflow-visible"
-              style={{ maxWidth: HAND_MAX_FAN_WIDTH }}
-              data-flip-anchor={localPlayerId ? `hand-${localPlayerId}` : undefined}
-              onPointerLeave={() => {
-                if (!draggingId) setHoveredHandId(null)
-              }}
-            >
-              <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
-                {orderedLocalHand.map((card, i) => {
-                  // Only the touched/dragged card enlarges — never neighbors swept during reorder.
-                  const isActiveLift = draggingId === card.id || (!draggingId && hoveredHandId === card.id)
-                  return (
-                    <div
-                      key={card.id}
-                      onPointerDown={() => {
-                        isReorderingRef.current = true
-                        handleCardPointerDown(card.id)
-                        setHoveredHandId(card.id)
-                      }}
-                      onPointerEnter={() => {
-                        handleCardPointerEnter(card.id)
-                        // While reordering, pointerenter fires on every card we swap past —
-                        // do not treat those as hovered/enlarged.
-                        if (!isReorderingRef.current) setHoveredHandId(card.id)
-                      }}
-                      className={`relative shrink-0 touch-none transition-opacity duration-150 ${
-                        draggingId === card.id ? 'opacity-90' : ''
-                      }`}
-                      style={{
-                        marginLeft: i === 0 ? 0 : -handOverlap,
-                        zIndex: isActiveLift ? 80 : i,
-                      }}
-                    >
-                      <AnimatedCard
-                        flipId={card.id}
-                        rank={card.rank}
-                        suit={card.suit}
-                        width={HAND_CARD_WIDTH}
-                        selected={selectedCardIds.includes(card.id)}
-                        isNew={isRecentlyAcquired(card.id)}
-                        onClick={() => toggleSelectCard(card.id)}
-                        className="hover:!translate-y-0"
-                        wrapperClassName={`transition-transform duration-150 ease-out ${
-                          isActiveLift ? '-translate-y-4 scale-110' : ''
-                        }`}
-                      />
-                    </div>
-                  )
-                })}
               </div>
             </div>
-            <div className="mb-1 shrink-0">
-              <HandSortButtons
-                activeMode={handSortMode}
-                onSortSuit={handleSortHandBySuit}
-                onSortRank={handleSortHandByRank}
-              />
+
+            <div className="play-dock-hand min-w-0">
+              <div
+                ref={handRailRef}
+                className={`hand-rail min-w-0 justify-center ${
+                  handFan.swipe ? 'hand-rail-swipe overflow-x-auto overflow-y-visible' : 'overflow-visible'
+                }`}
+                style={{ maxWidth: '100%' }}
+                data-flip-anchor={localPlayerId ? `hand-${localPlayerId}` : undefined}
+                onPointerLeave={() => {
+                  if (!draggingId) setHoveredHandId(null)
+                }}
+              >
+                <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
+                  {orderedLocalHand.map((card, i) => {
+                    const isActiveLift = draggingId === card.id || (!draggingId && hoveredHandId === card.id)
+                    return (
+                      <div
+                        key={card.id}
+                        onPointerDown={() => {
+                          isReorderingRef.current = true
+                          handleCardPointerDown(card.id)
+                          setHoveredHandId(card.id)
+                        }}
+                        onPointerEnter={() => {
+                          handleCardPointerEnter(card.id)
+                          if (!isReorderingRef.current) setHoveredHandId(card.id)
+                        }}
+                        className={`relative shrink-0 touch-none transition-opacity duration-150 ${
+                          draggingId === card.id ? 'opacity-90' : ''
+                        }`}
+                        style={{
+                          marginLeft: i === 0 ? 0 : -handOverlap,
+                          zIndex: isActiveLift ? 80 : i,
+                        }}
+                      >
+                        <AnimatedCard
+                          flipId={card.id}
+                          rank={card.rank}
+                          suit={card.suit}
+                          width={handCardWidth}
+                          selected={selectedCardIds.includes(card.id)}
+                          isNew={isRecentlyAcquired(card.id)}
+                          onClick={() => toggleSelectCard(card.id)}
+                          className="hover:!translate-y-0"
+                          wrapperClassName={`transition-transform duration-150 ease-out ${
+                            isActiveLift ? '-translate-y-2 scale-105' : ''
+                          }`}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="play-dock-tools">
+              <div className="mb-0.5 shrink-0">
+                <HandSortButtons
+                  activeMode={handSortMode}
+                  onSortSuit={handleSortHandBySuit}
+                  onSortRank={handleSortHandByRank}
+                />
+              </div>
+              <div
+                key={feedback?.token ?? 'stable'}
+                className={`action-stack flex w-[3.4rem] shrink-0 flex-col items-stretch gap-1 self-end ${
+                  feedback ? 'animate-shake' : ''
+                }`}
+              >
+                <button
+                  type="button"
+                  disabled={!canDiscard}
+                  onClick={discardSelected}
+                  className="action-btn action-btn-danger action-btn-stack"
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  onClick={handleMeld}
+                  className="action-btn action-btn-blue action-btn-stack"
+                  title={
+                    topTouchInProgress
+                      ? 'Meld any legal combination of selected discard cards (top required) and hand cards - hand cards are optional - or add them onto one of your team\'s melds'
+                      : "Select hand cards (and optionally one of your team's melds above to append to or a natural card to swap in for a wild)"
+                  }
+                >
+                  {topTouchInProgress ? 'Meld Top' : 'Meld'}
+                </button>
+                <button
+                  type="button"
+                  disabled={!canDeclareShow}
+                  onClick={declareShow}
+                  className="action-btn action-btn-gold action-btn-stack"
+                  title={showUnmetReasons.length > 0 ? showUnmetReasons.join(' ') : 'Declare Show and end the round'}
+                >
+                  Show
+                </button>
+              </div>
             </div>
           </div>
 
+          <div className="play-dock-help">
+            {topTouchInProgress && (
+              <button type="button" onClick={cancelTopTouch} className="action-btn action-btn-ghost mx-auto !min-h-8 !text-[11px]">
+                Cancel
+              </button>
+            )}
+
+            {stockDepleted && isLocalTurn && (
+              <button
+                type="button"
+                onClick={forceSuddenDeathEndRound}
+                className="action-btn action-btn-danger mx-auto !min-h-9 !text-xs"
+                title="Stock is empty. If you cannot Top Touch AND immediately empty your hand with a legal Show this turn, the round must end now."
+              >
+                Stock empty — End Round
+              </button>
+            )}
+
+            {feedback && (
+              <p className="mx-auto mt-0.5 w-full max-w-xl rounded-xl bg-red-900/35 px-4 py-2 text-center text-sm font-medium leading-snug text-red-50/90 ring-1 ring-red-300/25 backdrop-blur-sm sm:text-[14px]">
+                {feedback.message}
+              </p>
+            )}
+          </div>
         </section>
       </div>
 
@@ -707,34 +726,6 @@ export function Table() {
   )
 }
 
-function PozzettoActiveStatus({
-  teams,
-  localTeamId,
-}: {
-  teams: Team[]
-  localTeamId: Team['id'] | undefined
-}) {
-  const lines = teams
-    .filter((t) => t.pozzetto.claimed)
-    .map((t) => ({
-      id: t.id,
-      text: t.id === localTeamId ? 'Pozzetto is active for us' : 'Pozzetto is active for them',
-    }))
-  if (lines.length === 0) return null
-  return (
-    <div className="pointer-events-auto flex max-w-[220px] flex-col items-end gap-1">
-      {lines.map((line) => (
-        <p
-          key={line.id}
-          className="rounded-md bg-black/45 px-2.5 py-1 text-right text-[11px] font-medium text-amber-100 ring-1 ring-amber-300/25"
-        >
-          {line.text}
-        </p>
-      ))}
-    </div>
-  )
-}
-
 function SidePlayer({
   player,
   cardCount,
@@ -745,6 +736,7 @@ function SidePlayer({
   roleLabel,
   stackOrientation,
   compact = false,
+  inHeader = false,
 }: {
   player: Player
   cardCount: number
@@ -755,14 +747,17 @@ function SidePlayer({
   roleLabel: string
   stackOrientation: 'horizontal' | 'vertical' | 'side'
   compact?: boolean
+  inHeader?: boolean
 }) {
   return (
     <div
       className={`flex transition-[box-shadow] duration-200 ${
-        compact
-          ? 'felt-panel w-full flex-col items-center gap-1.5 px-1.5 py-2 sm:px-2.5'
-          : 'items-center gap-2.5 rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/10 backdrop-blur-sm'
-      } ${highlight && !compact ? 'ring-yellow-300/40' : ''} ${
+        inHeader
+          ? 'north-header items-center gap-1 rounded-full bg-black/30 px-1.5 py-0.5 ring-1 ring-white/10'
+          : compact
+            ? 'felt-panel side-player w-full flex-col items-center gap-0.5 px-1 py-1'
+            : 'items-center gap-2.5 rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/10 backdrop-blur-sm'
+      } ${highlight && !compact && !inHeader ? 'ring-yellow-300/40' : ''} ${
         isActive ? 'ring-2 ring-yellow-300 shadow-[0_0_0_1px_rgba(250,204,21,0.25)]' : ''
       }`}
     >
@@ -770,25 +765,26 @@ function SidePlayer({
         name={player.name}
         color={player.avatarColor}
         connectionStatus={player.connectionStatus}
-        size={compact ? 34 : 36}
+        size={inHeader || compact ? 22 : 36}
       />
-      <div className={`min-w-0 ${compact ? 'w-full text-center' : 'flex-1'}`}>
-        <p className={`font-bold leading-tight text-white ${compact ? 'truncate text-[10px] sm:text-xs' : 'truncate text-xs'}`}>
-          {player.name}
-          {highlight && <span className="ml-1 text-[9px] font-semibold text-yellow-300/90">(bot)</span>}
-        </p>
-        {compact && (
-          <p className="truncate text-[9px] text-white/45">
-            {roleLabel}
-            <span className="hidden sm:inline"> · Seat {player.seat + 1}</span>
+      {!inHeader && (
+        <div className={`side-player-meta min-w-0 ${compact ? 'w-full text-center' : 'flex-1'}`}>
+          <p className={`font-bold leading-tight text-white ${compact ? 'truncate text-[9px]' : 'truncate text-xs'}`}>
+            {player.name}
+            {highlight && <span className="ml-1 text-[9px] font-semibold text-yellow-300/90">(bot)</span>}
           </p>
-        )}
-        {isActive && remainingSeconds != null && (
-          <div className={`mt-1 ${compact ? 'flex justify-center' : ''}`}>
-            <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
-          </div>
-        )}
-      </div>
+          {compact && (
+            <p className="truncate text-[8px] text-white/45">
+              {roleLabel}
+            </p>
+          )}
+          {isActive && remainingSeconds != null && (
+            <div className={`mt-1 ${compact ? 'flex justify-center' : ''}`}>
+              <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
+            </div>
+          )}
+        </div>
+      )}
       <MiniCardStack count={cardCount} flipAnchorId={`hand-${player.id}`} orientation={stackOrientation} />
     </div>
   )

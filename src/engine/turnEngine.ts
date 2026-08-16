@@ -234,6 +234,9 @@ function resolveTopTouchCards(selection: TopTouchSelection): { ok: true; cards: 
  *   separate minimum-card-count gate here beyond what `buildSet` /
  *   `buildSequence` themselves require (3+) - the only real constraint is
  *   "the combined candidate set forms a legal meld or legal append".
+ *   Hand cards are optional on Top Touch: 3+ discard cards including the
+ *   top, mixed hand+discard, or several cards appended onto an existing
+ *   meld are all legal when the combination itself is a legal play.
  */
 export function attemptMeldAction(params: MeldActionParams): MeldActionResult {
   const { hand, team, selectedHandCardIds, targetMeldId, topTouch = null, slideEdge } = params
