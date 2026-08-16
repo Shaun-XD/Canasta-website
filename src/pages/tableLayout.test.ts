@@ -11,7 +11,7 @@ const VIEWPORTS = {
   landscapeShort: 844,
 } as const
 
-describe('phone-fit hand fan', () => {
+describe('phone-fit hand fan (handheld layout only)', () => {
   it('scales card width down on narrow rails and caps at 78 on wide ones', () => {
     expect(scaledHandCardWidth(VIEWPORTS.se)).toBeLessThan(70)
     expect(scaledHandCardWidth(VIEWPORTS.se)).toBeGreaterThanOrEqual(52)

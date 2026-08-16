@@ -17,6 +17,16 @@
       rel="stylesheet"
     />
     <title>Canasta</title>
+    <script>
+      (function () {
+        var ua = navigator.userAgent || ''
+        var handheld =
+          /iPhone|iPod|iPad|Android|webOS|BlackBerry|IEMobile|Opera Mini|Tablet|PlayBook|Kindle|Silk/i.test(ua) ||
+          (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) ||
+          (/\bMobile\b/i.test(ua) && !/\bWindows NT\b/i.test(ua))
+        document.documentElement.classList.add(handheld ? 'device-handheld' : 'device-desktop')
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -128,27 +128,39 @@ describe('DiscardPileView - Top Touch selection clicks', () => {
 
   it('does not scroll a pile of 9 or fewer, and scrolls from the 10th card', () => {
     const nine = Array.from({ length: 9 }, (_, i) => c('6', i % 2 === 0 ? 'hearts' : 'clubs'))
-    const { container, rerender } = render(<DiscardPileView cards={nine} cardWidth={40} />)
+    const { container, rerender } = render(
+      <DiscardPileView cards={nine} cardWidth={40} compactWindow />,
+    )
     expect((container.querySelector('.discard-fan') as HTMLElement).className).not.toMatch(/overflow-x-auto/)
 
     const ten = [...nine, c('7', 'spades')]
-    rerender(<DiscardPileView cards={ten} cardWidth={40} />)
+    rerender(<DiscardPileView cards={ten} cardWidth={40} compactWindow />)
     expect((container.querySelector('.discard-fan') as HTMLElement).className).toMatch(/overflow-x-auto/)
   })
 
   it('keeps a 9-card-wide slot and enables hidden horizontal scroll past that', () => {
     const cards = Array.from({ length: 12 }, (_, i) => c('5', i % 2 === 0 ? 'hearts' : 'spades'))
     const cardWidth = 40
-    const { container } = render(<DiscardPileView cards={cards} cardWidth={cardWidth} />)
+    const { container } = render(
+      <DiscardPileView cards={cards} cardWidth={cardWidth} compactWindow />,
+    )
     const row = container.querySelector('.discard-fan') as HTMLElement
     expect(row.className).toMatch(/overflow-x-auto/)
     expect(row.style.width).toBe(`${discardFanWidth(cardWidth, 9)}px`)
     expect(container.querySelectorAll('.group').length).toBe(12)
   })
 
+  it('does not cap the fan to 9 cards on desktop (no compactWindow)', () => {
+    const cards = Array.from({ length: 12 }, (_, i) => c('5', i % 2 === 0 ? 'hearts' : 'spades'))
+    const { container } = render(<DiscardPileView cards={cards} />)
+    const row = container.querySelector('.discard-fan') as HTMLElement
+    expect(row.style.width).toBe('')
+    expect(container.querySelectorAll('.group').length).toBe(12)
+  })
+
   it('does not show a scrollbar class on the discard fan', () => {
     const cards = Array.from({ length: 12 }, () => c('8', 'clubs'))
-    const { container } = render(<DiscardPileView cards={cards} cardWidth={40} />)
+    const { container } = render(<DiscardPileView cards={cards} cardWidth={40} compactWindow />)
     const row = container.querySelector('.discard-fan') as HTMLElement
     expect(row.className).toMatch(/discard-fan/)
     expect(row.className).not.toMatch(/scrollbar/)

@@ -3,10 +3,12 @@ import type { CardModel } from '../types/game'
 import { AnimatedCard } from './AnimatedCard'
 
 export const DISCARD_CARD_WIDTH = 64
-/** How many cards fit in the visible window before older ones hide to the left. */
+/** How many cards fit in the visible window before older ones hide to the left (phone / tablet). */
 export const DISCARD_VISIBLE_CARDS = 9
 /** Fraction of each card's width covered by the next — constant so the 9-card window stays readable. */
 export const DISCARD_OVERLAP_RATIO = 0.55
+/** Desktop fan overlap — lower = wider fan / more of each card visible. */
+const DESKTOP_OVERLAP_RATIO = 0.48
 /**
  * Max pointer travel (px) between pointerdown and the matching click for a
  * gesture to still count as a "tap" that toggles selection. Anything past
@@ -22,15 +24,75 @@ export function discardFanWidth(cardWidth: number, count: number): number {
   return Math.round(cardWidth + (n - 1) * peek)
 }
 
+function DiscardCardFace({
+  card,
+  i,
+  overlapPx,
+  cardWidth,
+  isMostRecent,
+  isSelected,
+  clickable,
+  clickableToBegin,
+  clickableToToggle,
+  showBadge,
+  handleClick,
+}: {
+  card: CardModel
+  i: number
+  overlapPx: number
+  cardWidth: number
+  isMostRecent: boolean
+  isSelected: boolean
+  clickable: boolean
+  clickableToBegin: boolean
+  clickableToToggle: boolean
+  showBadge: boolean
+  handleClick?: () => void
+}) {
+  return (
+    <div
+      key={card.id}
+      className={`group relative block shrink-0 leading-none hover:z-40 ${clickable ? 'cursor-pointer' : ''}`}
+      style={{ marginLeft: i === 0 ? 0 : -overlapPx, zIndex: isSelected ? 30 + i : i }}
+      onClick={handleClick}
+      role={clickable ? 'button' : undefined}
+      title={
+        clickableToToggle
+          ? isMostRecent
+            ? 'Top card is required for Top Touch'
+            : isSelected
+              ? 'Tap to remove this card from the Top Touch selection'
+              : 'Tap to add this card to the Top Touch selection'
+          : clickableToBegin
+            ? 'Tap to Top Touch this card'
+            : undefined
+      }
+    >
+      <AnimatedCard
+        flipId={card.id}
+        rank={card.rank}
+        suit={card.suit}
+        width={cardWidth}
+        selected={isSelected}
+        liftOnSelect={false}
+        wrapperClassName={clickable ? 'group-hover:ring-2 group-hover:ring-amber-300/90' : ''}
+      />
+      {showBadge && isMostRecent && (
+        <span className="pointer-events-none absolute -top-6 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-400 px-1.5 py-0.5 text-[8px] font-bold leading-none text-amber-950 shadow ring-1 ring-amber-200">
+          PICK-UP
+        </span>
+      )}
+    </div>
+  )
+}
+
 /**
  * Renders the ENTIRE discard pile as a fanned spread. Oldest is left / newest
- * is right (FIFO). At most {@link DISCARD_VISIBLE_CARDS} cards fit in the
- * slot; older cards hide to the left and the fan scrolls horizontally with
- * no scrollbar. The view pins to the latest card whenever the top changes.
+ * is right (FIFO).
  *
- * Once a Top Touch is in progress, any card in the pile becomes clickable:
- * clicking toggles that card alone in/out of the meld candidate set (the
- * top/most-recent card is always included and cannot be deselected).
+ * On phones/tablets (`compactWindow`), at most {@link DISCARD_VISIBLE_CARDS}
+ * cards fit in the slot; older cards hide to the left and the fan scrolls.
+ * Laptop/desktop uses the original uncapped fan.
  *
  * Hover must NOT scale, translate, or filter (drop-shadow) these cards —
  * that clips the face. Highlight with a ring only.
@@ -40,6 +102,7 @@ export function DiscardPileView({
   cardWidth = DISCARD_CARD_WIDTH,
   maxWidth,
   showBadge = true,
+  compactWindow = false,
   onTopCardClick,
   topCardInteractive = false,
   topTouchInProgress = false,
@@ -53,6 +116,8 @@ export function DiscardPileView({
   maxWidth?: number
   /** PICK-UP label on the top card. Off when labels would collide with overlays. */
   showBadge?: boolean
+  /** 9-card scroll window — phone / tablet only. */
+  compactWindow?: boolean
   /** Fires when the most-recent (top) card is clicked - begins a Top Touch (item 5). */
   onTopCardClick?: () => void
   /** Whether the top card is currently clickable (i.e. it's the local player's draw phase). */
@@ -64,20 +129,25 @@ export function DiscardPileView({
   /** Fires with a card's id when it's clicked during an in-progress Top Touch. */
   onToggleDiscardCard?: (cardId: string) => void
 }) {
-  const overlapPx = cardWidth * DISCARD_OVERLAP_RATIO
-  const idealWidth = discardFanWidth(cardWidth, cards.length)
-  const fanCap = Math.round(maxWidth != null ? Math.min(maxWidth, idealWidth) : idealWidth)
-  const contentWidth =
-    cards.length <= 1 ? cardWidth : cardWidth + (cards.length - 1) * (cardWidth - overlapPx)
-  const needsHScroll = contentWidth > fanCap + 0.5
+  const overlapRatio = compactWindow ? DISCARD_OVERLAP_RATIO : DESKTOP_OVERLAP_RATIO
+  const overlapPx = cardWidth * overlapRatio
   const selectedSet = new Set(selectedDiscardIds)
   const topCard = cards[cards.length - 1]
   const topId = topCard?.id
+  const topIndex = cards.length - 1
 
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null)
   const scrollAtDown = useRef(0)
   const wasDrag = useRef(false)
+
+  const idealWidth = compactWindow ? discardFanWidth(cardWidth, cards.length) : undefined
+  const fanCap = compactWindow
+    ? Math.round(maxWidth != null && idealWidth != null ? Math.min(maxWidth, idealWidth) : (idealWidth ?? cardWidth))
+    : undefined
+  const contentWidth =
+    cards.length <= 1 ? cardWidth : cardWidth + (cards.length - 1) * (cardWidth - overlapPx)
+  const needsHScroll = compactWindow && fanCap != null && contentWidth > fanCap + 0.5
 
   useLayoutEffect(() => {
     const el = scrollerRef.current
@@ -110,18 +180,73 @@ export function DiscardPileView({
     pointerDownAt.current = null
   }
 
+  function cardClick(i: number, cardId: string) {
+    const isMostRecent = i === topIndex
+    const clickableToBegin = isMostRecent && topCardInteractive && !!onTopCardClick
+    const clickableToToggle = topTouchInProgress && !!onToggleDiscardCard
+    const action = clickableToToggle
+      ? () => onToggleDiscardCard!(cardId)
+      : clickableToBegin
+        ? onTopCardClick
+        : undefined
+    if (!action) return undefined
+    return () => {
+      if (wasDrag.current) return
+      action()
+    }
+  }
+
   if (cards.length === 0) {
     const emptyH = Math.round(cardWidth * 1.4)
     return (
       <div
-        className="rounded-lg border-2 border-dashed border-white/20"
+        className={`flex items-center justify-center rounded-lg border-2 border-dashed border-white/20 ${
+          compactWindow ? '' : 'text-[10px] text-white/40'
+        }`}
         style={{ width: cardWidth, height: emptyH }}
         aria-label="Discard pile empty"
-      />
+      >
+        {compactWindow ? null : 'empty'}
+      </div>
     )
   }
 
-  const topIndex = cards.length - 1
+  const faces = cards.map((card, i) => {
+    const isMostRecent = i === topIndex
+    const isSelected = topTouchInProgress && selectedSet.has(card.id)
+    const clickableToBegin = isMostRecent && topCardInteractive && !!onTopCardClick
+    const clickableToToggle = topTouchInProgress && !!onToggleDiscardCard
+    return (
+      <DiscardCardFace
+        key={card.id}
+        card={card}
+        i={i}
+        overlapPx={overlapPx}
+        cardWidth={cardWidth}
+        isMostRecent={isMostRecent}
+        isSelected={isSelected}
+        clickable={clickableToBegin || clickableToToggle}
+        clickableToBegin={clickableToBegin}
+        clickableToToggle={clickableToToggle}
+        showBadge={showBadge}
+        handleClick={cardClick(i, card.id)}
+      />
+    )
+  })
+
+  if (!compactWindow) {
+    return (
+      <div
+        className="discard-fan flex max-w-full items-end overflow-x-auto px-0.5 pb-0 pt-6 sm:pt-7"
+        onPointerDown={handleRowPointerDown}
+        onPointerMove={handleRowPointerMove}
+        onPointerUp={handleRowPointerEnd}
+        onPointerCancel={handleRowPointerEnd}
+      >
+        {faces}
+      </div>
+    )
+  }
 
   return (
     <div className="relative shrink-0" style={{ width: fanCap, maxWidth: fanCap }}>
@@ -142,59 +267,7 @@ export function DiscardPileView({
         onPointerUp={handleRowPointerEnd}
         onPointerCancel={handleRowPointerEnd}
       >
-        {cards.map((card, i) => {
-          const isMostRecent = i === topIndex
-          const isSelected = topTouchInProgress && selectedSet.has(card.id)
-          const clickableToBegin = isMostRecent && topCardInteractive && !!onTopCardClick
-          const clickableToToggle = topTouchInProgress && !!onToggleDiscardCard
-          const clickable = clickableToBegin || clickableToToggle
-          const action = clickableToToggle
-            ? () => onToggleDiscardCard!(card.id)
-            : clickableToBegin
-              ? onTopCardClick
-              : undefined
-          const handleClick = action
-            ? () => {
-                if (wasDrag.current) return
-                action()
-              }
-            : undefined
-          return (
-            <div
-              key={card.id}
-              className={`group relative block shrink-0 leading-none hover:z-40 ${clickable ? 'cursor-pointer' : ''}`}
-              style={{ marginLeft: i === 0 ? 0 : -overlapPx, zIndex: isSelected ? 30 + i : i }}
-              onClick={handleClick}
-              role={clickable ? 'button' : undefined}
-              title={
-                clickableToToggle
-                  ? isMostRecent
-                    ? 'Top card is required for Top Touch'
-                    : isSelected
-                      ? 'Tap to remove this card from the Top Touch selection'
-                      : 'Tap to add this card to the Top Touch selection'
-                  : clickableToBegin
-                    ? 'Tap to Top Touch this card'
-                    : undefined
-              }
-            >
-              <AnimatedCard
-                flipId={card.id}
-                rank={card.rank}
-                suit={card.suit}
-                width={cardWidth}
-                selected={isSelected}
-                liftOnSelect={false}
-                wrapperClassName={clickable ? 'group-hover:ring-2 group-hover:ring-amber-300/90' : ''}
-              />
-              {showBadge && isMostRecent && (
-                <span className="pointer-events-none absolute -top-6 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-400 px-1.5 py-0.5 text-[8px] font-bold leading-none text-amber-950 shadow ring-1 ring-amber-200">
-                  PICK-UP
-                </span>
-              )}
-            </div>
-          )
-        })}
+        {faces}
       </div>
     </div>
   )

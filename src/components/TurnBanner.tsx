@@ -56,12 +56,12 @@ export function TurnBanner({
         isPaused
           ? 'bg-white/20 text-white'
           : isLocalTurn
-            ? 'bg-yellow-300/40 text-white ring-1 ring-yellow-100/35 backdrop-blur-[2px] shadow-none'
+            ? 'bg-yellow-400/95 text-emerald-950'
             : 'bg-black/45 text-white ring-1 ring-white/10'
       }`}
     >
       <span
-        className={`h-2 w-2 shrink-0 rounded-full ${isPaused ? 'bg-white/50' : isLocalTurn ? 'bg-yellow-100' : 'bg-yellow-300'} ${isPaused ? '' : 'animate-pulse'}`}
+        className={`h-2 w-2 shrink-0 rounded-full ${isPaused ? 'bg-white/50' : isLocalTurn ? 'bg-emerald-800' : 'bg-yellow-300'} ${isPaused ? '' : 'animate-pulse'}`}
       />
       {isPaused ? (
         <span className="font-semibold">Paused</span>

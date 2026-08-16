@@ -6,6 +6,14 @@ import { AnimatedCard } from './AnimatedCard'
 
 const CLASSIFICATION_LABEL: Record<MeldClassification, string> = {
   'in-progress': '',
+  'mixed-canasta': 'MIXED CANASTA',
+  limpa: 'LIMPA',
+  'mixed-canasta-2s': 'MIXED CANASTA (2s)',
+  'limpa-2s': 'LIMPA OF 2s',
+}
+
+const CLASSIFICATION_LABEL_COMPACT: Record<MeldClassification, string> = {
+  'in-progress': '',
   'mixed-canasta': 'MIXED',
   limpa: 'LIMPA',
   'mixed-canasta-2s': 'MIXED 2s',
@@ -21,6 +29,14 @@ const CLASSIFICATION_TITLE: Record<MeldClassification, string> = {
 }
 
 const CLASSIFICATION_COLOR: Record<MeldClassification, string> = {
+  'in-progress': '',
+  'mixed-canasta': 'bg-orange-400 text-orange-950',
+  limpa: 'bg-emerald-300 text-emerald-950',
+  'mixed-canasta-2s': 'bg-sky-300 text-sky-950',
+  'limpa-2s': 'bg-yellow-300 text-yellow-950',
+}
+
+const CLASSIFICATION_COLOR_COMPACT: Record<MeldClassification, string> = {
   'in-progress': '',
   'mixed-canasta': 'bg-orange-400/40 text-white/80 ring-1 ring-white/15',
   limpa: 'bg-emerald-300/40 text-white/80 ring-1 ring-white/15',
@@ -42,6 +58,7 @@ export function MeldArea({
   canModify = false,
   onMoveWild,
   maxCardWidth = MELD_CARD_MAX,
+  compact = false,
 }: {
   team: Team
   align?: 'left' | 'right' | 'center'
@@ -52,6 +69,8 @@ export function MeldArea({
   onMoveWild?: (meldId: string) => void
   /** Cap so table melds stay slightly smaller than the local hand cards. */
   maxCardWidth?: number
+  /** Smaller translucent badges — phone / tablet only. */
+  compact?: boolean
 }) {
   const shellRef = useRef<HTMLDivElement>(null)
   const [cardWidth, setCardWidth] = useState(54)
@@ -64,13 +83,13 @@ export function MeldArea({
       const available = el.clientWidth - 8 // inner padding
       const perCol = (available - MELD_GAP * (n - 1)) / n
       const cap = Math.min(MELD_CARD_MAX, maxCardWidth)
-      setCardWidth(Math.max(28, Math.min(cap, Math.floor(perCol))))
+      setCardWidth(Math.max(compact ? 28 : 45, Math.min(cap, Math.floor(perCol))))
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [team.melds.length, maxCardWidth])
+  }, [team.melds.length, maxCardWidth, compact])
 
   const cardHeight = Math.round(cardWidth * 1.4)
   const peekPx = Math.max(16, Math.round(cardHeight * MELD_PEEK_RATIO))
@@ -98,6 +117,7 @@ export function MeldArea({
           onSelect={onSelectMeld ? () => onSelectMeld(meld.id) : undefined}
           canModify={canModify}
           onMoveWild={onMoveWild}
+          compact={compact}
         />
       ))}
     </div>
@@ -113,6 +133,7 @@ function MeldColumn({
   onSelect,
   canModify,
   onMoveWild,
+  compact,
 }: {
   meld: Meld
   cardWidth: number
@@ -122,6 +143,7 @@ function MeldColumn({
   onSelect?: () => void
   canModify: boolean
   onMoveWild?: (meldId: string) => void
+  compact: boolean
 }) {
   // Sequences display high→low; bottom of the column is always the lowest-rank card.
   const cards = meld.type === 'sequence' ? [...meldCards(meld)].reverse() : meldCards(meld)
@@ -138,8 +160,9 @@ function MeldColumn({
   const cardHeight = Math.round(cardWidth * 1.4)
   const bottomIndex = cards.length - 1
   const colMaxW = isComplete ? cardHeight + 6 : cardWidth + 4
-  const classLabel = CLASSIFICATION_LABEL[meld.classification]
+  const classLabel = (compact ? CLASSIFICATION_LABEL_COMPACT : CLASSIFICATION_LABEL)[meld.classification]
   const classTitle = CLASSIFICATION_TITLE[meld.classification]
+  const classColor = (compact ? CLASSIFICATION_COLOR_COMPACT : CLASSIFICATION_COLOR)[meld.classification]
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col items-center gap-0.5" style={{ maxWidth: colMaxW }}>
@@ -152,9 +175,9 @@ function MeldColumn({
           selectable ? 'cursor-pointer hover:bg-white/10' : 'cursor-default'
         } ${selected ? 'ring-2 ring-yellow-300' : ''}`}
       >
-        {isComplete && classLabel && (
+        {isComplete && classLabel && compact && (
           <span
-            className={`pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[110%] whitespace-nowrap rounded-full px-1.5 py-px text-[8px] font-semibold uppercase leading-none tracking-wide ${CLASSIFICATION_COLOR[meld.classification]}`}
+            className={`pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[110%] whitespace-nowrap rounded-full px-1.5 py-px text-[8px] font-semibold uppercase leading-none tracking-wide ${classColor}`}
           >
             {classLabel}
           </span>
@@ -192,8 +215,21 @@ function MeldColumn({
             />
           )
         })}
+        {!compact && meld.isCanasta && classLabel && (
+          <span
+            className={`absolute -top-1.5 -right-1 z-50 rounded-full px-1 py-0.5 text-[7px] font-bold shadow ${classColor}`}
+          >
+            {classLabel}
+          </span>
+        )}
         {(meld.wildCount > 0 || hasMovableTwo) && !meld.isCanasta && (
-          <span className="pointer-events-none absolute -bottom-0.5 right-0 z-20 rounded-full bg-purple-400/40 px-1 py-px text-[6px] font-semibold uppercase leading-none tracking-wide text-white/80 ring-1 ring-white/15">
+          <span
+            className={
+              compact
+                ? 'pointer-events-none absolute -bottom-0.5 right-0 z-20 rounded-full bg-purple-400/40 px-1 py-px text-[6px] font-semibold uppercase leading-none tracking-wide text-white/80 ring-1 ring-white/15'
+                : 'absolute -bottom-1 -right-1 z-50 rounded-full bg-purple-400 px-1 py-0.5 text-[7px] font-bold text-purple-950 shadow'
+            }
+          >
             {meld.wildCount > 0 ? 'WILD' : '2★'}
           </span>
         )}

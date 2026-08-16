@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef } from 'react'
 
+import { isHandheldDevice } from '../lib/device'
+
 /** A position in the scroll-stable / transform-stable coordinate space. */
 interface FlipPosition {
   left: number
@@ -24,8 +26,9 @@ export const FLIP_DURATION_MS = 380
 /** Slower flights for bot/mock plays so the user can see what was moved. */
 export const BOT_FLIP_DURATION_MS = 900
 const FLIP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)' // ease-out
-/** Detached bot/remote flights stay at table-card size, not desktop 72px. */
-const DETACHED_FLIGHT_WIDTH_MAX = 40
+/** Detached bot/remote flights stay at table-card size on phones. Desktop uses 72. */
+const DETACHED_FLIGHT_WIDTH_MAX_HANDHELD = 40
+const DETACHED_FLIGHT_WIDTH_MAX_DESKTOP = 72
 const DETACHED_FLIGHT_WIDTH_FALLBACK = 32
 
 function rectWidth(r: DOMRect | FlipPosition): number {
@@ -34,8 +37,10 @@ function rectWidth(r: DOMRect | FlipPosition): number {
 
 function flightWidthFromRects(from: DOMRect | FlipPosition, to: DOMRect | FlipPosition): number {
   const measured = [rectWidth(from), rectWidth(to)].filter((w) => w > 0)
-  const raw = measured.length > 0 ? Math.min(...measured) : DETACHED_FLIGHT_WIDTH_FALLBACK
-  return Math.round(Math.min(DETACHED_FLIGHT_WIDTH_MAX, raw))
+  const fallback = isHandheldDevice() ? DETACHED_FLIGHT_WIDTH_FALLBACK : DETACHED_FLIGHT_WIDTH_MAX_DESKTOP
+  const cap = isHandheldDevice() ? DETACHED_FLIGHT_WIDTH_MAX_HANDHELD : DETACHED_FLIGHT_WIDTH_MAX_DESKTOP
+  const raw = measured.length > 0 ? Math.min(...measured) : fallback
+  return Math.round(Math.min(cap, raw))
 }
 
 /** Card ids whose next FLIP flight should use {@link BOT_FLIP_DURATION_MS}. */
@@ -169,7 +174,7 @@ export function playDetachedCardFlight(opts: {
   /** Defaults to the fast human duration; bots pass {@link BOT_FLIP_DURATION_MS}. */
   durationMs?: number
 }): Promise<void> {
-  const width = opts.width ?? flightWidthFromRects(opts.from, opts.to)
+  const width = opts.width ?? (isHandheldDevice() ? flightWidthFromRects(opts.from, opts.to) : 72)
   const height = opts.height ?? Math.round(width * 1.4)
   const durationMs = opts.durationMs ?? FLIP_DURATION_MS
   const fromLeft = opts.from.left

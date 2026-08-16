@@ -4,8 +4,10 @@ import { useGameStore } from '../store/gameStore'
 import { PlayerAvatar } from '../components/PlayerAvatar'
 import type { MaxPlayers, TeamId } from '../types/game'
 import { DEFAULT_TURN_TIMER_SECONDS, normalizeMaxPlayers, seatsPerTeam } from '../types/game'
+import { useIsHandheld } from '../lib/device'
 
 export function Lobby() {
+  const handheld = useIsHandheld()
   const { roomId } = useParams()
   const navigate = useNavigate()
   const room = useGameStore((s) => s.room)
@@ -49,7 +51,13 @@ export function Lobby() {
 
   if (sessionCheck === 'pending') {
     return (
-      <div className="felt-bg page-scroll flex items-center justify-center text-white/70">
+      <div
+        className={
+          handheld
+            ? 'felt-bg page-scroll flex items-center justify-center text-white/70'
+            : 'felt-bg flex min-h-screen items-center justify-center text-white/70'
+        }
+      >
         Reconnecting to lobby…
       </div>
     )
@@ -88,7 +96,13 @@ export function Lobby() {
   }
 
   return (
-    <div className="felt-bg page-scroll px-4 py-6 text-white sm:py-10">
+    <div
+      className={
+        handheld
+          ? 'felt-bg page-scroll px-4 py-6 text-white'
+          : 'felt-bg min-h-screen px-4 py-10 text-white'
+      }
+    >
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 flex justify-start">
           <button

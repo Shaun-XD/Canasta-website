@@ -4,8 +4,10 @@ import { useGameStore } from '../store/gameStore'
 import { Card } from '../components/Card'
 import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, type MaxPlayers } from '../types/game'
 import { getSocketUrl } from '../lib/socket'
+import { useIsHandheld } from '../lib/device'
 
 export function Landing() {
+  const handheld = useIsHandheld()
   const navigate = useNavigate()
   const createRoom = useGameStore((s) => s.actions.createRoom)
   const joinRoom = useGameStore((s) => s.actions.joinRoom)
@@ -85,27 +87,41 @@ export function Landing() {
   }
 
   return (
-    <div className="felt-bg page-scroll flex flex-col items-center px-4 py-6 sm:justify-center sm:py-10">
-      <div className="mb-6 flex items-center gap-3 sm:mb-10 sm:gap-4">
+    <div
+      className={
+        handheld
+          ? 'felt-bg page-scroll flex flex-col items-center px-4 py-6'
+          : 'felt-bg flex min-h-screen flex-col items-center justify-center px-4 py-10'
+      }
+    >
+      <div className={handheld ? 'mb-6 flex items-center gap-3' : 'mb-10 flex items-center gap-4'}>
         <div className="flex gap-1 -rotate-6">
-          <Card rank="A" suit="spades" width={48} />
-          <Card rank="K" suit="hearts" width={48} className="rotate-6" />
+          <Card rank="A" suit="spades" width={handheld ? 48 : 54} />
+          <Card rank="K" suit="hearts" width={handheld ? 48 : 54} className="rotate-6" />
         </div>
         <div className="text-left">
-          <h1 className="text-4xl font-black tracking-tight text-white drop-shadow sm:text-5xl">
+          <h1
+            className={`font-black tracking-tight text-white drop-shadow ${handheld ? 'text-4xl' : 'text-5xl'}`}
+          >
             Canasta
           </h1>
           <p className="text-sm font-medium text-white/60">Online multiplayer · 1v1 or 2v2</p>
-          <p className="mt-1 text-[11px] font-medium text-yellow-200/70 sm:hidden">
-            On a phone, rotate to landscape to play.
-          </p>
+          {handheld && (
+            <p className="mt-1 text-[11px] font-medium text-yellow-200/70">
+              On a phone, rotate to landscape to play.
+            </p>
+          )}
           <p className="mt-1.5 text-base font-bold uppercase tracking-[0.38em] text-white drop-shadow">
             By AVK
           </p>
         </div>
       </div>
 
-      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-black/25 p-5 shadow-2xl backdrop-blur sm:p-6">
+      <div
+        className={`w-full max-w-sm rounded-2xl border border-white/10 bg-black/25 shadow-2xl backdrop-blur ${
+          handheld ? 'p-5' : 'p-6'
+        }`}
+      >
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-white/60">
           Your name
         </label>
