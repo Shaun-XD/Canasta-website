@@ -289,15 +289,18 @@ export function Table() {
     draggingId,
     dragPoint,
     handlePointerDown: handleCardPointerDown,
-    handlePointerEnter: handleCardPointerEnter,
     applyOrder: applyHandOrder,
     consumeClickIfDragged,
   } = useHandReorder(rawLocalHand.map((c) => c.id))
   const [handSortMode, setHandSortMode] = useState<HandSortMode | null>('suit')
 
   useEffect(() => {
-    if (draggingId == null) isReorderingRef.current = false
-    else setHandSortMode(null) // manual drag clears the active auto-sort highlight
+    if (draggingId == null) {
+      isReorderingRef.current = false
+      return
+    }
+    setHandSortMode(null) // manual drag clears the active auto-sort highlight
+    setHoveredHandId(null)
   }, [draggingId])
 
   if (!room || room.roomId !== roomId) return <Navigate to="/" replace />
@@ -685,9 +688,9 @@ export function Table() {
                 <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
                   {orderedLocalHand.map((card, i) => {
                     const isDragging = draggingId === card.id
-                    const isActiveLift = isDragging || (!draggingId && hoveredHandId === card.id)
+                    const isActiveLift = !draggingId && hoveredHandId === card.id
                     const marginLeft = i === 0 ? 0 : -handOverlap
-                    const zIndex = isDragging ? 220 : isActiveLift ? 80 : i
+                    const zIndex = isDragging ? 220 : i
                     return (
                       <Fragment key={card.id}>
                         {isDragging && (
@@ -702,11 +705,10 @@ export function Table() {
                           onPointerDown={(e) => {
                             isReorderingRef.current = true
                             handleCardPointerDown(card.id, e)
-                            setHoveredHandId(card.id)
                           }}
                           onPointerEnter={() => {
-                            handleCardPointerEnter(card.id)
-                            if (!isReorderingRef.current) setHoveredHandId(card.id)
+                            if (draggingId) return
+                            setHoveredHandId(card.id)
                           }}
                           className={`relative shrink-0 touch-none ${isDragging ? 'opacity-95' : 'transition-opacity duration-150'}`}
                           style={fanCardDragStyle(isDragging, dragPoint, handCardWidth, marginLeft, zIndex)}
@@ -1149,9 +1151,9 @@ export function Table() {
               <div className="relative mx-auto flex items-end justify-center" style={{ width: desktopHandFanWidth }}>
                 {orderedLocalHand.map((card, i) => {
                   const isDragging = draggingId === card.id
-                  const isActiveLift = isDragging || (!draggingId && hoveredHandId === card.id)
+                  const isActiveLift = !draggingId && hoveredHandId === card.id
                   const marginLeft = i === 0 ? 0 : -desktopHandOverlap
-                  const zIndex = isDragging ? 220 : isActiveLift ? 80 : i
+                  const zIndex = isDragging ? 220 : i
                   return (
                     <Fragment key={card.id}>
                       {isDragging && (
@@ -1166,11 +1168,10 @@ export function Table() {
                         onPointerDown={(e) => {
                           isReorderingRef.current = true
                           handleCardPointerDown(card.id, e)
-                          setHoveredHandId(card.id)
                         }}
                         onPointerEnter={() => {
-                          handleCardPointerEnter(card.id)
-                          if (!isReorderingRef.current) setHoveredHandId(card.id)
+                          if (draggingId) return
+                          setHoveredHandId(card.id)
                         }}
                         className={`relative shrink-0 touch-none ${isDragging ? 'opacity-95' : 'transition-opacity duration-150'}`}
                         style={fanCardDragStyle(isDragging, dragPoint, HAND_CARD_WIDTH, marginLeft, zIndex)}
