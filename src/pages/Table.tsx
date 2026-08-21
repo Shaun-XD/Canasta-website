@@ -692,7 +692,7 @@ export function Table() {
             </div>
 
             <div className="play-dock-tools">
-              <div className="mb-0.5 shrink-0">
+              <div className="shrink-0">
                 <HandSortButtons
                   activeMode={handSortMode}
                   onSortSuit={handleSortHandBySuit}
@@ -701,7 +701,7 @@ export function Table() {
               </div>
               <div
                 key={feedback?.token ?? 'stable'}
-                className={`action-stack flex w-[2.45rem] shrink-0 flex-col items-stretch gap-1.5 self-center ${
+                className={`action-stack flex shrink-0 flex-row items-center gap-1 self-end ${
                   feedback ? 'animate-shake' : ''
                 }`}
               >
