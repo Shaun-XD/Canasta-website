@@ -19,42 +19,6 @@ interface FlipPosition {
  * position across renders/parents without triggering extra re-renders.
  */
 const lastKnownRect = new Map<string, FlipPosition>()
-/** Ids currently being finger-dragged — never FLIP these (the drag translate would look like a move). */
-const frozenFlipIds = new Set<string>()
-/** After a drag, write the settled slot into lastKnownRect without playing a flight. */
-const snapFlipIds = new Set<string>()
-/** Hand reorder: neighbors slide in-place (no arc ghost). */
-let handReorderLive = false
-const SLOT_SLIDE_MS = 160
-
-/** Pause FLIP for a card while the player is dragging it in the hand. */
-export function freezeCardFlip(id: string) {
-  frozenFlipIds.add(id)
-  snapFlipIds.delete(id)
-}
-
-/**
- * Resume FLIP after a hand drag.
- * Pass `from` (finger position) to slide into the slot; otherwise snap with no motion.
- */
-export function unfreezeCardFlip(id: string, from?: FlipPosition) {
-  frozenFlipIds.delete(id)
-  if (from) {
-    lastKnownRect.set(id, from)
-    snapFlipIds.delete(id)
-  } else {
-    snapFlipIds.add(id)
-  }
-}
-
-/** Neighbor cards should slide sideways, not arc-fly, while a hand card is held. */
-export function beginHandReorder() {
-  handReorderLive = true
-}
-
-export function endHandReorder() {
-  handReorderLive = false
-}
 
 // Distinctly visible motion for human plays: long enough to read as real
 // travel, short enough to stay snappy.
@@ -310,12 +274,6 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
-    if (frozenFlipIds.has(id)) return
-    if (snapFlipIds.has(id)) {
-      snapFlipIds.delete(id)
-      lastKnownRect.set(id, getScrollStablePosition(node))
-      return
-    }
 
     const prevPos = lastKnownRect.get(id)
     const nextPos = getScrollStablePosition(node)
@@ -326,13 +284,7 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
       const moved = Math.abs(dx) > 1 || Math.abs(dy) > 1
 
       if (moved && typeof node.animate === 'function') {
-        if (handReorderLive) {
-          // Overlapped fans only shuffle sideways. Ghost+arc flights hide the
-          // real node and bounce neighbors up/down on every slot swap.
-          playInPlaceSlide(node, dx, Math.abs(dy) < 8 ? 0 : dy)
-        } else {
-          playFlightGhost(node, dx, dy, consumeFlipDuration(id))
-        }
+        playFlightGhost(node, dx, dy, consumeFlipDuration(id))
       } else {
         // No flight — drop any pending slow flag so it can't leak to a later move.
         pendingBotFlipIds.delete(id)
@@ -345,34 +297,10 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   return ref
 }
 
-/** In-place horizontal shuffle — does not hide the card or add an arc. */
-function playInPlaceSlide(node: HTMLElement, dx: number, dy: number): void {
-  const prior = activeSlotSlide.get(node)
-  if (prior) {
-    try {
-      prior.cancel()
-    } catch {
-      /* already finished */
-    }
-  }
-  if (typeof node.animate !== 'function') return
-  const anim = node.animate(
-    [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
-    { duration: SLOT_SLIDE_MS, easing: 'ease-out', fill: 'none' },
-  )
-  activeSlotSlide.set(node, anim)
-  const cleanup = () => {
-    if (activeSlotSlide.get(node) === anim) activeSlotSlide.delete(node)
-  }
-  anim.addEventListener('finish', cleanup)
-  anim.addEventListener('cancel', cleanup)
-}
-
 /** Tracks how many in-flight ghosts are currently hiding a given node. */
 const flightHideCount = new WeakMap<HTMLElement, number>()
 /** Active Animation per node so a newer flight can cancel a stale one. */
 const activeFlight = new WeakMap<HTMLElement, Animation>()
-const activeSlotSlide = new WeakMap<HTMLElement, Animation>()
 
 /**
  * Plays the actual FLIP flight on a fixed-position clone of `node` appended
