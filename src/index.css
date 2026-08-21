@@ -173,13 +173,14 @@ body {
   touch-action: manipulation;
 }
 
-@media (max-width: 639px) {
-  .action-btn-stack {
-    min-height: 2.85rem;
-    padding: 0.5rem 0.45rem;
-    font-size: 0.8125rem;
-    border-radius: 0.7rem;
-  }
+/* Fixed-width Discard beside the stock. Never use action-btn-stack alone in a
+   wrapping flex row — width:100% turns it into a full-width bar. */
+.play-dock-discard {
+  flex: 0 0 3.7rem;
+  width: 3.7rem;
+  min-width: 3.7rem;
+  max-width: 3.7rem;
+  align-self: flex-end;
 }
 
 .pause-chip {
@@ -599,6 +600,12 @@ html.device-handheld .play-dock-help:empty {
 
 html.device-handheld .action-btn.action-btn-stack {
   min-width: 0;
+}
+
+html.device-handheld .play-dock-discard.action-btn-stack {
+  width: 3.7rem;
+  min-width: 3.7rem;
+  max-width: 3.7rem;
 }
 
 html.device-handheld .hand-rail-swipe {

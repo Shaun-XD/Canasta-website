@@ -589,16 +589,15 @@ export function Table() {
               )}
             </div>
 
-            <button
-              type="button"
-              disabled={!canDiscard}
-              onClick={discardSelected}
-              className="action-btn action-btn-danger action-btn-stack w-[3.7rem] shrink-0 self-end"
-            >
-              Discard
-            </button>
-
             <div className="play-dock-piles">
+              <button
+                type="button"
+                disabled={!canDiscard}
+                onClick={discardSelected}
+                className="play-dock-discard action-btn action-btn-danger action-btn-stack"
+              >
+                Discard
+              </button>
               <button
                 ref={stockRef}
                 type="button"
@@ -957,15 +956,6 @@ export function Table() {
           </div>
 
           <div className="flex w-full items-end gap-2 sm:gap-3">
-            <button
-              type="button"
-              disabled={!canDiscard}
-              onClick={discardSelected}
-              className="action-btn action-btn-danger action-btn-stack w-[4.75rem] shrink-0 self-center sm:hidden"
-            >
-              Discard
-            </button>
-
             <div className="flex shrink-0 flex-col items-center gap-0.5">
               <button
                 ref={stockRef}
@@ -1006,7 +996,7 @@ export function Table() {
                 type="button"
                 disabled={!canDiscard}
                 onClick={discardSelected}
-                className="action-btn action-btn-danger action-btn-stack hidden sm:block"
+                className="action-btn action-btn-danger action-btn-stack"
               >
                 Discard
               </button>

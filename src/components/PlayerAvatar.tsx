@@ -2,10 +2,11 @@ import type { ConnectionStatus } from '../types/game'
 
 function initials(name: string): string {
   return name
+    .replace(/\(.*?\)/g, ' ')
     .split(/\s+/)
-    .filter(Boolean)
+    .filter((w) => /^[A-Za-z]/.test(w))
     .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase())
+    .map((w) => w[0]!.toUpperCase())
     .join('')
 }
 
