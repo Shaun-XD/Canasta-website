@@ -170,6 +170,16 @@ body {
   font-size: 0.72rem;
   white-space: nowrap;
   border-radius: 0.55rem;
+  touch-action: manipulation;
+}
+
+@media (max-width: 639px) {
+  .action-btn-stack {
+    min-height: 2.85rem;
+    padding: 0.5rem 0.45rem;
+    font-size: 0.8125rem;
+    border-radius: 0.7rem;
+  }
 }
 
 .pause-chip {

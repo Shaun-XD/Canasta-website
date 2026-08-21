@@ -28,14 +28,6 @@ const CLASSIFICATION_TITLE: Record<MeldClassification, string> = {
   'limpa-2s': 'Limpa of 2s',
 }
 
-const CLASSIFICATION_COLOR: Record<MeldClassification, string> = {
-  'in-progress': '',
-  'mixed-canasta': 'bg-orange-400 text-orange-950',
-  limpa: 'bg-emerald-300 text-emerald-950',
-  'mixed-canasta-2s': 'bg-sky-300 text-sky-950',
-  'limpa-2s': 'bg-yellow-300 text-yellow-950',
-}
-
 const CLASSIFICATION_COLOR_COMPACT: Record<MeldClassification, string> = {
   'in-progress': '',
   'mixed-canasta': 'bg-orange-400/40 text-white/80 ring-1 ring-white/15',
@@ -69,7 +61,7 @@ export function MeldArea({
   onMoveWild?: (meldId: string) => void
   /** Cap so table melds stay slightly smaller than the local hand cards. */
   maxCardWidth?: number
-  /** Smaller translucent badges — phone / tablet only. */
+  /** Smaller cards and short labels on the handheld table. */
   compact?: boolean
 }) {
   const shellRef = useRef<HTMLDivElement>(null)
@@ -162,7 +154,7 @@ function MeldColumn({
   const colMaxW = isComplete ? cardHeight + 6 : cardWidth + 4
   const classLabel = (compact ? CLASSIFICATION_LABEL_COMPACT : CLASSIFICATION_LABEL)[meld.classification]
   const classTitle = CLASSIFICATION_TITLE[meld.classification]
-  const classColor = (compact ? CLASSIFICATION_COLOR_COMPACT : CLASSIFICATION_COLOR)[meld.classification]
+  const classColor = CLASSIFICATION_COLOR_COMPACT[meld.classification]
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col items-center gap-0.5" style={{ maxWidth: colMaxW }}>
@@ -175,9 +167,11 @@ function MeldColumn({
           selectable ? 'cursor-pointer hover:bg-white/10' : 'cursor-default'
         } ${selected ? 'ring-2 ring-yellow-300' : ''}`}
       >
-        {isComplete && classLabel && compact && (
+        {isComplete && classLabel && (
           <span
-            className={`pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[110%] whitespace-nowrap rounded-full px-1.5 py-px text-[8px] font-semibold uppercase leading-none tracking-wide ${classColor}`}
+            className={`pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-px font-semibold uppercase leading-none tracking-wide ${
+              compact ? '-translate-y-[15%] text-[8px]' : '-translate-y-[20%] text-[9px]'
+            } ${classColor}`}
           >
             {classLabel}
           </span>
@@ -215,21 +209,8 @@ function MeldColumn({
             />
           )
         })}
-        {!compact && meld.isCanasta && classLabel && (
-          <span
-            className={`absolute -top-1.5 -right-1 z-50 rounded-full px-1 py-0.5 text-[7px] font-bold shadow ${classColor}`}
-          >
-            {classLabel}
-          </span>
-        )}
         {(meld.wildCount > 0 || hasMovableTwo) && !meld.isCanasta && (
-          <span
-            className={
-              compact
-                ? 'pointer-events-none absolute -bottom-0.5 right-0 z-20 rounded-full bg-purple-400/40 px-1 py-px text-[6px] font-semibold uppercase leading-none tracking-wide text-white/80 ring-1 ring-white/15'
-                : 'absolute -bottom-1 -right-1 z-50 rounded-full bg-purple-400 px-1 py-0.5 text-[7px] font-bold text-purple-950 shadow'
-            }
-          >
+          <span className="pointer-events-none absolute -bottom-0.5 right-0 z-20 rounded-full bg-purple-400/40 px-1 py-px text-[6px] font-semibold uppercase leading-none tracking-wide text-white/80 ring-1 ring-white/15 sm:text-[7px]">
             {meld.wildCount > 0 ? 'WILD' : '2★'}
           </span>
         )}

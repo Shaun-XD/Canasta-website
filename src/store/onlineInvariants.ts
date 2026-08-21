@@ -32,5 +32,10 @@ export function shouldSkipOnlineSnapshot(opts: {
     (prevGame.pendingSlide?.displacedWildCardId ?? null) !==
       (nextGame.pendingSlide?.displacedWildCardId ?? null) ||
     (prevGame.pendingSlide?.meldId ?? null) !== (nextGame.pendingSlide?.meldId ?? null)
-  return !stockChanged && !localHandChanged && !acquiredNew && !slideChanged
+  // Round-end review reveals other seats' real card ids (were `hidden-*`).
+  const otherHandsRevealed = Object.keys(nextGame.hands).some((pid) => {
+    if (pid === localPlayerId) return false
+    return (prevGame.hands[pid]?.[0]?.id ?? null) !== (nextGame.hands[pid]?.[0]?.id ?? null)
+  })
+  return !stockChanged && !localHandChanged && !acquiredNew && !slideChanged && !otherHandsRevealed
 }

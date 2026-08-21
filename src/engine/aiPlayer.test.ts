@@ -71,6 +71,74 @@ describe('planAiMelds — methodical lays (not dump-everything)', () => {
     )
   })
 
+  it('does not open 7-6-5♦ when K-Q-J-10-joker♦ is already on the table', () => {
+    const table = buildSequence(
+      [c('K', 'diamonds'), c('Q', 'diamonds'), c('J', 'diamonds'), c('10', 'diamonds'), joker()],
+      'team-a',
+    )
+    if (!table.ok) throw new Error('setup')
+    const seven = c('7', 'diamonds')
+    const six = c('6', 'diamonds')
+    const five = c('5', 'diamonds')
+    const hand = [seven, six, five, c('3', 'clubs')]
+    const reserved = bridgeReservedCardIds(hand, [table.meld])
+    expect(reserved.has(seven.id)).toBe(true)
+    expect(reserved.has(six.id)).toBe(true)
+    expect(reserved.has(five.id)).toBe(true)
+
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a', [table.meld])
+    expect(plans.filter((p) => p.kind === 'sequence')).toHaveLength(0)
+    expect(remainingHand.map((card) => card.id)).toEqual(
+      expect.arrayContaining([seven.id, six.id, five.id]),
+    )
+  })
+
+  it('opens the long diamond run and holds 7-6-5♦ instead of a second diamond seed', () => {
+    const seven = c('7', 'diamonds')
+    const six = c('6', 'diamonds')
+    const five = c('5', 'diamonds')
+    const hand = [
+      c('K', 'diamonds'),
+      c('Q', 'diamonds'),
+      c('J', 'diamonds'),
+      c('10', 'diamonds'),
+      joker(),
+      seven,
+      six,
+      five,
+      c('3', 'clubs'),
+    ]
+    const { plans, remainingHand } = planAiMelds(hand, 'team-a')
+    const sequences = plans.filter((p) => p.kind === 'sequence')
+    expect(sequences).toHaveLength(1)
+    expect(sequences[0].cardIds).not.toContain(seven.id)
+    expect(sequences[0].cardIds).not.toContain(six.id)
+    expect(sequences[0].cardIds).not.toContain(five.id)
+    expect(remainingHand.map((card) => card.id)).toEqual(
+      expect.arrayContaining([seven.id, six.id, five.id]),
+    )
+  })
+
+  it('still opens a same-suit seed after that suit already has a canasta', () => {
+    let built = buildSequence(
+      [
+        c('3', 'diamonds'),
+        c('4', 'diamonds'),
+        c('5', 'diamonds'),
+        c('6', 'diamonds'),
+        c('7', 'diamonds'),
+        c('8', 'diamonds'),
+        c('9', 'diamonds'),
+      ],
+      'team-a',
+    )
+    if (!built.ok) throw new Error('setup')
+    expect(built.meld.isCanasta).toBe(true)
+    const hand = [c('J', 'diamonds'), c('Q', 'diamonds'), c('K', 'diamonds'), c('3', 'clubs')]
+    const { plans } = planAiMelds(hand, 'team-a', [built.meld])
+    expect(plans.some((p) => p.kind === 'sequence')).toBe(true)
+  })
+
   it('does not open a hopeless Ace set when opponents already locked most Aces', () => {
     const enemy = buildSet(
       [c('A', 'hearts'), c('A', 'spades'), c('A', 'clubs'), c('A', 'diamonds')],

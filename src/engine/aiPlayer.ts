@@ -711,6 +711,9 @@ export function scoreTopTouchUnlock(opts: {
  *
  * Hold-backs (do not auto-dump):
  * - Cards that already append onto a team meld
+ * - Same-suit cards while an incomplete team sequence of that suit is on the
+ *   table (e.g. K-Q-J-10-★♦ + hand 7-6-5♦ — wait for 8/A rather than a
+ *   second diamond seed that wastes the 7)
  * - Same-suit hand runs that sit 1–2 ranks off an existing team sequence
  *   (e.g. table 6-7-8♠, hand 10-J-Q♠ — wait for 9/joker to join toward canasta)
  * - Sets whose canasta is impossible from public board counts (enemy locked
@@ -807,10 +810,13 @@ export function bridgeReservedCardIds(hand: CardModel[], existingMelds: Meld[]):
 
   for (const suit of suits) {
     const suited = sortByRank(hand.filter((c) => c.suit === suit && c.rank !== 'JOKER'))
-    if (suited.length < 2) continue
+    if (suited.length === 0) continue
 
     for (const meld of sequences) {
       if (meld.suit !== suit) continue
+      // Never seed a second run of this suit while the first can still grow
+      // into a canasta (7♦ belongs on K-Q-J-10-★♦, not on a fresh 7-6-5).
+      for (const card of suited) reserved.add(card.id)
       const aceHigh = meldUsesAceHigh(meld)
       const meldOrders = meld.slots.map((s) => sequenceRankOrder(s.slotRank, aceHigh))
       const mMin = Math.min(...meldOrders)
@@ -890,6 +896,15 @@ function ranksWithExistingSet(melds: Meld[]): Set<Rank> {
   return ranks
 }
 
+/** Suits that already have an incomplete (not yet canasta) team sequence. */
+function incompleteSequenceSuits(melds: Meld[]): Set<Suit> {
+  const suits = new Set<Suit>()
+  for (const meld of melds) {
+    if (meld.type === 'sequence' && meld.suit && !meld.isCanasta) suits.add(meld.suit)
+  }
+  return suits
+}
+
 function countShortInProgress(melds: Meld[]): number {
   return melds.filter((m) => m.slots.length < 5).length
 }
@@ -958,6 +973,10 @@ function findBestNewMeld(
   const consider = (group: CardModel[], kind: 'set' | 'sequence') => {
     const attempt = kind === 'set' ? buildSet(group, teamId) : buildSequence(group, teamId)
     if (!attempt.ok) return
+    if (kind === 'sequence' && !ctx.mayEmptyForShow) {
+      const suit = group.find((c) => c.rank !== 'JOKER' && c.suit)?.suit
+      if (suit && incompleteSequenceSuits(ctx.ownMelds).has(suit)) return
+    }
     if (kind === 'set') {
       const natural = group.find((c) => !isWild(c))
       if (natural && isHopelessNewSetRank(natural.rank, group.filter((c) => !isWild(c)).length, ctx)) {

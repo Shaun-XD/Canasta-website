@@ -18,6 +18,7 @@ export function RoundEndModal({
   scores,
   matchTargetScore,
   gameOverTeamId,
+  onReviewTable,
   onNewGame,
   onReturnToLobby,
 }: {
@@ -25,6 +26,8 @@ export function RoundEndModal({
   scores: RoundScoreResult | null
   matchTargetScore: number
   gameOverTeamId: string | null
+  /** Hide this overlay and inspect the final table (melds + remaining hands). */
+  onReviewTable: () => void
   /** Full match reset: new deal, scores cleared, stay at the table. */
   onNewGame: () => void
   /** Leave the table and return the room to lobby. */
@@ -79,21 +82,30 @@ export function RoundEndModal({
           First team to {matchTargetScore} points wins the match.
         </p>
 
-        <div className="mt-6 flex gap-3">
+        <div className="mt-6 flex flex-col gap-3">
           <button
             type="button"
-            onClick={onReturnToLobby}
-            className="flex-1 rounded-lg border border-white/20 px-4 py-2 font-medium text-white transition hover:bg-white/10"
+            onClick={onReviewTable}
+            className="min-h-12 w-full rounded-lg bg-yellow-400 px-4 py-3 font-semibold text-emerald-950 transition hover:bg-yellow-300"
           >
-            Return to Lobby
+            Review table
           </button>
-          <button
-            type="button"
-            onClick={onNewGame}
-            className="flex-1 rounded-lg bg-yellow-400 px-4 py-2 font-semibold text-emerald-950 transition hover:bg-yellow-300"
-          >
-            New Game
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onReturnToLobby}
+              className="flex-1 rounded-lg border border-white/20 px-4 py-2 font-medium text-white transition hover:bg-white/10"
+            >
+              Return to Lobby
+            </button>
+            <button
+              type="button"
+              onClick={onNewGame}
+              className="flex-1 rounded-lg border border-white/20 px-4 py-2 font-medium text-white transition hover:bg-white/10"
+            >
+              New Game
+            </button>
+          </div>
         </div>
       </div>
     </div>

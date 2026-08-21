@@ -18,7 +18,7 @@ import { HandSortButtons, type HandSortMode } from '../components/HandSortButton
 import { sortHandByRank, sortHandBySuit } from '../lib/deck'
 import { useIsHandheld } from '../lib/device'
 import { evaluateShowEligibility, unmetShowConditions } from '../engine/showEligibility'
-import type { Player, Team } from '../types/game'
+import type { CardModel, Player, Team } from '../types/game'
 import { meldCards } from '../types/game'
 import { planHandFan, scaledHandCardWidth } from './tableLayout'
 
@@ -101,6 +101,8 @@ export function Table() {
   )
   const [menuOpen, setMenuOpen] = useState(false)
   const [hoveredHandId, setHoveredHandId] = useState<string | null>(null)
+  /** Dismiss the score overlay to inspect the final table, then return. */
+  const [reviewingTable, setReviewingTable] = useState(false)
   /** Sync lock so pointerenter during reorder doesn't enlarge neighbor cards before React state catches up. */
   const isReorderingRef = useRef(false)
 
@@ -140,6 +142,12 @@ export function Table() {
     }
     prevStoreErrorRef.current = lastActionError
   }, [lastActionError])
+
+  useEffect(() => {
+    if (room?.status !== 'round-end' && room?.status !== 'game-end') {
+      setReviewingTable(false)
+    }
+  }, [room?.status])
 
   useLayoutEffect(() => {
     const el = handRailRef.current
@@ -267,18 +275,27 @@ export function Table() {
   const localTeam = room.teams.find((t) => t.playerIds.includes(localPlayerId ?? ''))
   const localHand = rawLocalHand
   const orderedLocalHand = handOrder.map((id) => localHand.find((c) => c.id === id)).filter((c): c is (typeof localHand)[number] => !!c)
-  const activePlayer = room.players.find((p) => p.id === game.turn.activePlayerId)
-  const topDiscard = game.discardPile.cards[game.discardPile.cards.length - 1]
+  const liveGame = game
+  const activePlayer = room.players.find((p) => p.id === liveGame.turn.activePlayerId)
+  const topDiscard = liveGame.discardPile.cards[liveGame.discardPile.cards.length - 1]
+  const roundOver = room.status === 'round-end' || room.status === 'game-end'
+  const revealHands = roundOver
 
-  const isDrawPhase = isLocalTurn && game.turn.phase === 'draw'
-  const isActionPhase = isLocalTurn && game.turn.phase === 'action'
+  function seatHand(playerId: string): CardModel[] {
+    return (liveGame.hands[playerId] ?? []).filter((c) => !meldedCardIds.has(c.id))
+  }
+
+  const isDrawPhase = isLocalTurn && game.turn.phase === 'draw' && !roundOver
+  const isActionPhase = isLocalTurn && game.turn.phase === 'action' && !roundOver
   const stockDepleted = game.stock.length === 0
   // Count only ids still in hand — stale ids from a prior online meld must not
   // block Discard while the UI only highlights the live card(s).
   const handIdSet = new Set(localHand.map((c) => c.id))
   const validSelectedCount = selectedCardIds.filter((id) => handIdSet.has(id)).length
   const canDiscard =
-    (isActionPhase || (isLocalTurn && game.turn.phase === 'discard')) && validSelectedCount === 1
+    !roundOver &&
+    (isActionPhase || (isLocalTurn && game.turn.phase === 'discard')) &&
+    validSelectedCount === 1
 
   const showElig = localTeam ? evaluateShowEligibility(localTeam, localHand.length) : null
   const canDeclareShow =
@@ -393,6 +410,8 @@ export function Table() {
             <SidePlayer
               player={seating.north}
               cardCount={game.hands[seating.north.id]?.length ?? 0}
+              cards={seatHand(seating.north.id)}
+              revealHands={revealHands}
               isActive={game.turn.activePlayerId === seating.north.id}
               remainingSeconds={remainingSeconds}
               isPaused={isPaused}
@@ -463,11 +482,13 @@ export function Table() {
       <div className="table-board relative mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col gap-1 px-1.5 py-1 sm:gap-1.5 sm:px-3 sm:py-1.5">
         {/* WEST | MELDS (grow) | EAST — melds own the vertical space */}
         <div className="melds-row relative flex min-h-0 flex-[1_1_0] items-stretch gap-1 sm:gap-1.5">
-          <div className="side-seat side-seat-west flex w-11 shrink-0 flex-col items-center justify-center">
+          <div className={`side-seat side-seat-west flex shrink-0 flex-col items-center justify-center ${revealHands ? 'w-16 overflow-visible' : 'w-11'}`}>
             {seating.west && (
               <SidePlayer
                 player={seating.west}
                 cardCount={game.hands[seating.west.id]?.length ?? 0}
+                cards={seatHand(seating.west.id)}
+                revealHands={revealHands}
                 isActive={game.turn.activePlayerId === seating.west.id}
                 remainingSeconds={remainingSeconds}
                 isPaused={isPaused}
@@ -502,7 +523,7 @@ export function Table() {
                     <MeldArea
                       team={team}
                       align={index === 0 ? 'left' : 'right'}
-                      selectable={(isActionPhase || topTouchInProgress) && isLocalSide}
+                      selectable={(isActionPhase || topTouchInProgress) && isLocalSide && !roundOver}
                       selectedMeldId={selectedMeldId}
                       onSelectMeld={(id) => selectMeldTarget(selectedMeldId === id ? null : id)}
                       canModify={isLocalTurn && isLocalSide}
@@ -516,11 +537,13 @@ export function Table() {
             })}
           </section>
 
-          <div className="side-seat side-seat-east flex w-11 shrink-0 flex-col items-center justify-center">
+          <div className={`side-seat side-seat-east flex shrink-0 flex-col items-center justify-center ${revealHands ? 'w-16 overflow-visible' : 'w-11'}`}>
             {seating.east && (
               <SidePlayer
                 player={seating.east}
                 cardCount={game.hands[seating.east.id]?.length ?? 0}
+                cards={seatHand(seating.east.id)}
+                revealHands={revealHands}
                 isActive={game.turn.activePlayerId === seating.east.id}
                 remainingSeconds={remainingSeconds}
                 isPaused={isPaused}
@@ -565,6 +588,15 @@ export function Table() {
                 <TurnTimerBadge seconds={remainingSeconds} compact paused={isPaused} />
               )}
             </div>
+
+            <button
+              type="button"
+              disabled={!canDiscard}
+              onClick={discardSelected}
+              className="action-btn action-btn-danger action-btn-stack w-[3.7rem] shrink-0 self-end"
+            >
+              Discard
+            </button>
 
             <div className="play-dock-piles">
               <button
@@ -661,20 +693,13 @@ export function Table() {
               </div>
               <div
                 key={feedback?.token ?? 'stable'}
-                className={`action-stack flex w-[3.4rem] shrink-0 flex-col items-stretch gap-1 self-end ${
+                className={`action-stack flex w-[3.7rem] shrink-0 flex-col items-stretch gap-2 self-end ${
                   feedback ? 'animate-shake' : ''
                 }`}
               >
                 <button
                   type="button"
-                  disabled={!canDiscard}
-                  onClick={discardSelected}
-                  className="action-btn action-btn-danger action-btn-stack"
-                >
-                  Discard
-                </button>
-                <button
-                  type="button"
+                  disabled={roundOver}
                   onClick={handleMeld}
                   className="action-btn action-btn-blue action-btn-stack"
                   title={
@@ -744,15 +769,28 @@ export function Table() {
         </div>
       )}
 
-      {room.status === 'round-end' && (
+      {(room.status === 'round-end' || room.status === 'game-end') && !reviewingTable && (
         <RoundEndModal
           teams={room.teams}
           scores={game.lastRoundScores}
           matchTargetScore={room.matchTargetScore}
           gameOverTeamId={game.gameOverTeamId}
+          onReviewTable={() => setReviewingTable(true)}
           onNewGame={startNewGame}
           onReturnToLobby={returnToLobby}
         />
+      )}
+
+      {reviewingTable && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[60] flex justify-center px-4">
+          <button
+            type="button"
+            onClick={() => setReviewingTable(false)}
+            className="pointer-events-auto min-h-12 rounded-full bg-yellow-400 px-6 py-3 text-sm font-bold text-emerald-950 shadow-lg ring-1 ring-black/10"
+          >
+            Back to scores
+          </button>
+        </div>
       )}
 
       {!localPlayer && null}
@@ -817,11 +855,14 @@ export function Table() {
           <PozzettoActiveStatus teams={room.teams} localTeamId={localTeam?.id} />
         </div>
 
-        <div className="flex shrink-0 justify-center">
+        {/* NORTH — teammate */}
+        <div className="flex max-w-full shrink-0 justify-center overflow-x-auto">
           {seating.north && (
             <SidePlayer
               player={seating.north}
               cardCount={game.hands[seating.north.id]?.length ?? 0}
+              cards={seatHand(seating.north.id)}
+              revealHands={revealHands}
               isActive={game.turn.activePlayerId === seating.north.id}
               remainingSeconds={remainingSeconds}
               isPaused={isPaused}
@@ -833,11 +874,13 @@ export function Table() {
         </div>
 
         <div className="melds-row flex min-h-0 flex-[1_1_0] items-stretch gap-1.5 sm:gap-2">
-          <div className="flex w-[3.75rem] shrink-0 flex-col items-center justify-center sm:w-[5.75rem]">
+          <div className={`flex shrink-0 flex-col items-center justify-center ${revealHands ? 'w-[4.5rem] overflow-visible sm:w-[6.5rem]' : 'w-[3.75rem] sm:w-[5.75rem]'}`}>
             {seating.west && (
               <SidePlayer
                 player={seating.west}
                 cardCount={game.hands[seating.west.id]?.length ?? 0}
+                cards={seatHand(seating.west.id)}
+                revealHands={revealHands}
                 isActive={game.turn.activePlayerId === seating.west.id}
                 remainingSeconds={remainingSeconds}
                 isPaused={isPaused}
@@ -871,7 +914,7 @@ export function Table() {
                     <MeldArea
                       team={team}
                       align={index === 0 ? 'left' : 'right'}
-                      selectable={(isActionPhase || topTouchInProgress) && isLocalSide}
+                      selectable={(isActionPhase || topTouchInProgress) && isLocalSide && !roundOver}
                       selectedMeldId={selectedMeldId}
                       onSelectMeld={(id) => selectMeldTarget(selectedMeldId === id ? null : id)}
                       canModify={isLocalTurn && isLocalSide}
@@ -883,11 +926,13 @@ export function Table() {
             })}
           </section>
 
-          <div className="flex w-[3.75rem] shrink-0 flex-col items-center justify-center sm:w-[5.75rem]">
+          <div className={`flex shrink-0 flex-col items-center justify-center ${revealHands ? 'w-[4.5rem] overflow-visible sm:w-[6.5rem]' : 'w-[3.75rem] sm:w-[5.75rem]'}`}>
             {seating.east && (
               <SidePlayer
                 player={seating.east}
                 cardCount={game.hands[seating.east.id]?.length ?? 0}
+                cards={seatHand(seating.east.id)}
+                revealHands={revealHands}
                 isActive={game.turn.activePlayerId === seating.east.id}
                 remainingSeconds={remainingSeconds}
                 isPaused={isPaused}
@@ -911,7 +956,16 @@ export function Table() {
             />
           </div>
 
-          <div className="flex w-full items-end gap-2.5 sm:gap-3">
+          <div className="flex w-full items-end gap-2 sm:gap-3">
+            <button
+              type="button"
+              disabled={!canDiscard}
+              onClick={discardSelected}
+              className="action-btn action-btn-danger action-btn-stack w-[4.75rem] shrink-0 self-center sm:hidden"
+            >
+              Discard
+            </button>
+
             <div className="flex shrink-0 flex-col items-center gap-0.5">
               <button
                 ref={stockRef}
@@ -944,7 +998,7 @@ export function Table() {
 
             <div
               key={feedback?.token ?? 'stable'}
-              className={`action-stack ml-auto flex w-[6.5rem] shrink-0 flex-col items-stretch gap-1 self-center sm:w-[7.25rem] ${
+              className={`action-stack ml-auto flex w-[4.75rem] shrink-0 flex-col items-stretch gap-2.5 self-center sm:w-[7.25rem] sm:gap-2 ${
                 feedback ? 'animate-shake' : ''
               }`}
             >
@@ -952,12 +1006,13 @@ export function Table() {
                 type="button"
                 disabled={!canDiscard}
                 onClick={discardSelected}
-                className="action-btn action-btn-danger action-btn-stack"
+                className="action-btn action-btn-danger action-btn-stack hidden sm:block"
               >
                 Discard
               </button>
               <button
                 type="button"
+                disabled={roundOver}
                 onClick={handleMeld}
                 className="action-btn action-btn-blue action-btn-stack"
                 title={
@@ -1119,15 +1174,28 @@ export function Table() {
         </div>
       )}
 
-      {room.status === 'round-end' && (
+      {(room.status === 'round-end' || room.status === 'game-end') && !reviewingTable && (
         <RoundEndModal
           teams={room.teams}
           scores={game.lastRoundScores}
           matchTargetScore={room.matchTargetScore}
           gameOverTeamId={game.gameOverTeamId}
+          onReviewTable={() => setReviewingTable(true)}
           onNewGame={startNewGame}
           onReturnToLobby={returnToLobby}
         />
+      )}
+
+      {reviewingTable && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[60] flex justify-center px-4">
+          <button
+            type="button"
+            onClick={() => setReviewingTable(false)}
+            className="pointer-events-auto min-h-12 rounded-full bg-yellow-400 px-6 py-3 text-sm font-bold text-emerald-950 shadow-lg ring-1 ring-black/10"
+          >
+            Back to scores
+          </button>
+        </div>
       )}
 
       {!localPlayer && null}
@@ -1166,6 +1234,8 @@ function PozzettoActiveStatus({
 function SidePlayer({
   player,
   cardCount,
+  cards,
+  revealHands = false,
   isActive = false,
   remainingSeconds = null,
   isPaused = false,
@@ -1178,6 +1248,8 @@ function SidePlayer({
 }: {
   player: Player
   cardCount: number
+  cards?: CardModel[]
+  revealHands?: boolean
   isActive?: boolean
   remainingSeconds?: number | null
   isPaused?: boolean
@@ -1192,14 +1264,18 @@ function SidePlayer({
     <div
       className={`flex transition-[box-shadow] duration-200 ${
         inHeader
-          ? 'north-header items-center gap-1 rounded-full bg-black/30 px-1.5 py-0.5 ring-1 ring-white/10'
+          ? revealHands
+            ? 'north-header items-center gap-1 overflow-visible rounded-2xl bg-black/30 px-1.5 py-0.5 ring-1 ring-white/10'
+            : 'north-header items-center gap-1 rounded-full bg-black/30 px-1.5 py-0.5 ring-1 ring-white/10'
           : compact && dense
-            ? 'felt-panel side-player w-full flex-col items-center gap-0.5 px-1 py-1'
+            ? 'felt-panel side-player w-full flex-col items-center gap-0.5 overflow-visible px-1 py-1'
             : compact
-              ? 'felt-panel w-full flex-col items-center gap-1.5 px-1.5 py-2 sm:px-2.5'
-              : 'items-center gap-2.5 rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/10 backdrop-blur-sm'
+              ? 'felt-panel w-full flex-col items-center gap-1.5 overflow-visible px-1.5 py-2 sm:px-2.5'
+              : revealHands
+                ? 'items-center gap-2.5 overflow-visible rounded-2xl bg-black/35 px-3 py-2 ring-1 ring-white/10 backdrop-blur-sm'
+                : 'items-center gap-2.5 rounded-full bg-black/35 px-3 py-1.5 ring-1 ring-white/10 backdrop-blur-sm'
       } ${highlight && !compact && !inHeader ? 'ring-yellow-300/40' : ''} ${
-        isActive ? 'ring-2 ring-yellow-300 shadow-[0_0_0_1px_rgba(250,204,21,0.25)]' : ''
+        isActive && !revealHands ? 'ring-2 ring-yellow-300 shadow-[0_0_0_1px_rgba(250,204,21,0.25)]' : ''
       }`}
     >
       <PlayerAvatar
@@ -1229,6 +1305,8 @@ function SidePlayer({
       )}
       <MiniCardStack
         count={cardCount}
+        cards={revealHands ? cards : undefined}
+        faceUp={revealHands}
         flipAnchorId={`hand-${player.id}`}
         orientation={stackOrientation}
         dense={dense}

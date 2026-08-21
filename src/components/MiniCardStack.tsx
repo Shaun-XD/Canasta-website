@@ -1,4 +1,5 @@
 import { Card } from './Card'
+import type { CardModel } from '../types/game'
 
 /** Desktop (pre-compact) sizes. */
 const PORTRAIT_W = 30
@@ -18,20 +19,42 @@ const DENSE_SIDE_VISUAL_H = DENSE_SIDE_CARD_W
 const DENSE_SIDE_MAX_VISIBLE = 9
 const DENSE_SIDE_STEP = 6
 
+function isOpaquePlaceholder(card: CardModel): boolean {
+  return card.id.startsWith('hidden-')
+}
+
+function MiniFace({ card, faceUp, width }: { card?: CardModel; faceUp: boolean; width: number }) {
+  const show = faceUp && !!card && !isOpaquePlaceholder(card)
+  return (
+    <Card
+      faceDown={!show}
+      rank={show ? card.rank : undefined}
+      suit={show ? card.suit : undefined}
+      width={width}
+    />
+  )
+}
+
 /**
- * Face-down stack showing an opponent/teammate's remaining hand size.
- * Renders one back per card (exact count) so the pile visibly shrinks as they play.
+ * Opponent/teammate hand stack.
+ * Face-down during play (count only). After scoring, pass `cards` + `faceUp`
+ * to open remaining cards at that seat.
  *
  * - `horizontal` — North: portrait cards fanned left → right
  * - `side` — East/West: landscape cards stacked bottom → up (facing the table)
  */
 export function MiniCardStack({
   count,
+  cards,
+  faceUp = false,
   flipAnchorId,
   orientation = 'horizontal',
   dense = false,
 }: {
   count: number
+  /** When provided with `faceUp`, remaining cards are shown face-up. */
+  cards?: CardModel[]
+  faceUp?: boolean
   /**
    * Optional `data-flip-anchor` id so bot/mock card flights can target this
    * stack as an origin (when melding/discarding) or destination (when drawing).
@@ -41,10 +64,12 @@ export function MiniCardStack({
   /** Smaller stacks used only on phone / tablet tables. */
   dense?: boolean
 }) {
-  const n = Math.max(0, count)
+  const source = cards ?? []
+  const n = Math.max(source.length, Math.max(0, count))
+  const showFaces = faceUp && source.some((c) => !isOpaquePlaceholder(c))
 
   if (orientation === 'side') {
-    if (dense) {
+    if (dense && !showFaces) {
       const shown = Math.min(n, DENSE_SIDE_MAX_VISIBLE)
       const width = DENSE_SIDE_VISUAL_W
       const height = DENSE_SIDE_VISUAL_H + Math.max(0, shown - 1) * DENSE_SIDE_STEP
@@ -60,7 +85,7 @@ export function MiniCardStack({
             const fromBottom = shown - 1 - i
             return (
               <div
-                key={i}
+                key={source[i]?.id ?? i}
                 className="absolute"
                 style={{
                   left: 0,
@@ -80,7 +105,7 @@ export function MiniCardStack({
                     transform: 'rotate(90deg)',
                   }}
                 >
-                  <Card faceDown width={DENSE_SIDE_CARD_W} />
+                  <MiniFace card={source[i]} faceUp={false} width={DENSE_SIDE_CARD_W} />
                 </div>
               </div>
             )
@@ -92,9 +117,27 @@ export function MiniCardStack({
       )
     }
 
-    const step = n > 18 ? 11 : n > 14 ? 13 : 15
-    const width = SIDE_VISUAL_W
-    const height = SIDE_VISUAL_H + Math.max(0, n - 1) * step
+    const cardW = dense ? DENSE_SIDE_CARD_W : SIDE_CARD_W
+    const cardH = dense ? DENSE_SIDE_CARD_H : SIDE_CARD_H
+    const visualW = dense ? DENSE_SIDE_VISUAL_W : SIDE_VISUAL_W
+    const visualH = dense ? DENSE_SIDE_VISUAL_H : SIDE_VISUAL_H
+    const step = showFaces
+      ? dense
+        ? n > 18
+          ? 10
+          : 12
+        : n > 18
+          ? 16
+          : n > 12
+            ? 18
+            : 20
+      : n > 18
+        ? 11
+        : n > 14
+          ? 13
+          : 15
+    const width = visualW
+    const height = visualH + Math.max(0, n - 1) * step
 
     return (
       <div
@@ -107,32 +150,36 @@ export function MiniCardStack({
           const fromBottom = n - 1 - i
           return (
             <div
-              key={i}
+              key={source[i]?.id ?? i}
               className="absolute"
               style={{
                 left: 0,
                 bottom: fromBottom * step,
                 zIndex: i,
-                width: SIDE_VISUAL_W,
-                height: SIDE_VISUAL_H,
+                width: visualW,
+                height: visualH,
               }}
             >
               <div
                 className="absolute"
                 style={{
-                  width: SIDE_CARD_W,
-                  height: SIDE_CARD_H,
-                  left: (SIDE_VISUAL_W - SIDE_CARD_W) / 2,
-                  top: (SIDE_VISUAL_H - SIDE_CARD_H) / 2,
+                  width: cardW,
+                  height: cardH,
+                  left: (visualW - cardW) / 2,
+                  top: (visualH - cardH) / 2,
                   transform: 'rotate(90deg)',
                 }}
               >
-                <Card faceDown width={SIDE_CARD_W} />
+                <MiniFace card={source[i]} faceUp={showFaces} width={cardW} />
               </div>
             </div>
           )
         })}
-        <span className="absolute -bottom-1 -left-1 z-50 rounded-full bg-black/75 px-1.5 py-0.5 text-[10px] font-bold text-white ring-1 ring-white/15">
+        <span
+          className={`absolute -bottom-1 -left-1 z-50 rounded-full bg-black/75 font-bold text-white ring-1 ring-white/15 ${
+            dense ? 'px-1 py-px text-[9px] leading-none' : 'px-1.5 py-0.5 text-[10px]'
+          }`}
+        >
           {n}
         </span>
       </div>
@@ -147,22 +194,34 @@ export function MiniCardStack({
       ? n > 14
         ? 5
         : 6
-      : n > 18
-        ? 7
-        : n > 14
-          ? 8
-          : 9
+      : showFaces
+        ? n > 18
+          ? 10
+          : n > 12
+            ? 12
+            : 14
+        : n > 18
+          ? 7
+          : n > 14
+            ? 8
+            : 9
     : isVertical
       ? n > 14
         ? 7
         : n > 10
           ? 8
           : 9
-      : n > 18
-        ? 11
-        : n > 14
-          ? 13
-          : 15
+      : showFaces
+        ? n > 18
+          ? 14
+          : n > 12
+            ? 16
+            : 18
+        : n > 18
+          ? 11
+          : n > 14
+            ? 13
+            : 15
   const width = isVertical ? portraitW : portraitW + Math.max(0, n - 1) * step
   const height = isVertical ? portraitH + Math.max(0, n - 1) * step : portraitH
 
@@ -175,7 +234,7 @@ export function MiniCardStack({
     >
       {Array.from({ length: n }).map((_, i) => (
         <div
-          key={i}
+          key={source[i]?.id ?? i}
           className="absolute"
           style={
             isVertical
@@ -183,7 +242,7 @@ export function MiniCardStack({
               : { left: i * step, top: 0, zIndex: i }
           }
         >
-          <Card faceDown width={portraitW} />
+          <MiniFace card={source[i]} faceUp={showFaces} width={portraitW} />
         </div>
       ))}
       <span

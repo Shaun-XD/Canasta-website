@@ -98,13 +98,19 @@ def sanitize_room(room: dict[str, Any], viewer_id: str) -> dict[str, Any]:
     return {**room, "players": players}
 
 
-def sanitize_game(game: dict[str, Any] | None, viewer_id: str) -> dict[str, Any] | None:
+def sanitize_game(
+    game: dict[str, Any] | None,
+    viewer_id: str,
+    room: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     if not game:
         return None
+    # After scoring, everyone may review remaining hands face-up at each seat.
+    reveal_hands = (room or {}).get("status") in ("round-end", "game-end")
     hands_in = game.get("hands") or {}
     hands_out: dict[str, Any] = {}
     for pid, cards in hands_in.items():
-        if pid == viewer_id:
+        if pid == viewer_id or reveal_hands:
             hands_out[pid] = cards
         else:
             hands_out[pid] = _opaque_cards(len(cards), f"hidden-{pid}")
@@ -140,7 +146,7 @@ async def broadcast_state(room_id: str, room: dict[str, Any], game: dict[str, An
             )
             await sio.emit(
                 "game:state",
-                {"game": sanitize_game(game, pid), "playerId": pid},
+                {"game": sanitize_game(game, pid, room), "playerId": pid},
                 to=sid,
             )
         except Exception as exc:  # noqa: BLE001
@@ -245,7 +251,7 @@ async def room_rejoin(sid, data):
             "ok": True,
             **result,
             "room": sanitize_room(result["room"], result["playerId"]),
-            "game": sanitize_game(result.get("game"), result["playerId"]),
+            "game": sanitize_game(result.get("game"), result["playerId"], result.get("room")),
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
@@ -274,7 +280,7 @@ async def _player_action(sid: str, method: str, extra: dict[str, Any] | None = N
             "ok": True,
             "playerId": pid,
             "room": sanitize_room(room, pid) if room is not None else None,
-            "game": sanitize_game(game, pid) if room is not None else None,
+            "game": sanitize_game(game, pid, room) if room is not None else None,
         }
     except Exception as exc:  # noqa: BLE001
         await emit_error(sid, str(exc))

@@ -89,4 +89,23 @@ describe('shouldSkipOnlineSnapshot', () => {
     const next = { ...prev, stock: [] as GameState['stock'] }
     expect(shouldSkipOnlineSnapshot({ prevGame: prev, nextGame: next, localPlayerId: 'p1' })).toBe(false)
   })
+
+  it('does not skip when another seat\'s hand is revealed after scoring', () => {
+    const prev = game({
+      stock: [{ id: 's1', rank: '4', suit: 'clubs' }],
+      hands: {
+        p1: [{ id: 'c1', rank: '5', suit: 'hearts' }],
+        p2: [{ id: 'hidden-p2-0', rank: '3', suit: null }],
+      },
+      lastPlay: play,
+    })
+    const next = {
+      ...prev,
+      hands: {
+        p1: [{ id: 'c1', rank: '5', suit: 'hearts' }],
+        p2: [{ id: 'real-2', rank: 'K', suit: 'spades' as const }],
+      },
+    }
+    expect(shouldSkipOnlineSnapshot({ prevGame: prev, nextGame: next, localPlayerId: 'p1' })).toBe(false)
+  })
 })
