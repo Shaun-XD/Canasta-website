@@ -34,7 +34,7 @@ export function TurnBanner({
   // When paused, the action column shows the Paused chip — keep the banner quiet.
   if (compact && isPaused) {
     return (
-      <div className="relative z-20 mx-auto flex max-w-full items-center justify-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-medium text-white/70 ring-1 ring-white/10">
+      <div className="relative z-0 mx-auto flex max-w-full items-center justify-center gap-1.5 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/70 ring-1 ring-white/10">
         <span className="font-semibold text-white/85">Timer paused</span>
         {typeof remainingSeconds === 'number' && <TurnTimerBadge seconds={remainingSeconds} compact paused />}
       </div>
@@ -42,34 +42,34 @@ export function TurnBanner({
   }
 
   return (
-    // z-20 gives this banner a defined place in the stacking order so
-    // nothing beneath it (e.g. the discard pile's hover preview, which
-    // deliberately sits above it in a fixed layer) can render underneath
-    // it in a half-clipped, broken-looking way - see DiscardPileView.
     <div
       key={`${isLocalTurn}-${phase}-${isPaused}-${compact}`}
-      className={`animate-banner-in relative z-20 mx-auto flex max-w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 font-medium shadow-lg backdrop-blur transition-colors ${
+      className={`animate-banner-in relative z-0 mx-auto flex max-w-full flex-wrap items-center justify-center font-medium backdrop-blur-sm transition-colors ${
         compact
-          ? 'rounded-full px-3 py-1.5 text-xs sm:px-4'
-          : 'gap-x-2.5 gap-y-1.5 rounded-2xl px-4 py-2.5 text-sm sm:gap-3 sm:rounded-full sm:px-5'
+          ? 'gap-x-1.5 rounded-full px-2 py-0.5 text-[10px] shadow-none'
+          : 'z-20 gap-x-2.5 gap-y-1.5 rounded-2xl px-4 py-2.5 text-sm shadow-lg sm:gap-3 sm:rounded-full sm:px-5'
       } ${
         isPaused
           ? 'bg-white/20 text-white'
           : isLocalTurn
-            ? 'bg-yellow-400/95 text-emerald-950'
-            : 'bg-black/45 text-white ring-1 ring-white/10'
+            ? compact
+              ? 'bg-yellow-400/45 text-emerald-950 ring-1 ring-yellow-200/35'
+              : 'bg-yellow-400/95 text-emerald-950'
+            : compact
+              ? 'bg-black/30 text-white ring-1 ring-white/10'
+              : 'bg-black/45 text-white ring-1 ring-white/10'
       }`}
     >
       <span
-        className={`h-2 w-2 shrink-0 rounded-full ${isPaused ? 'bg-white/50' : isLocalTurn ? 'bg-emerald-800' : 'bg-yellow-300'} ${isPaused ? '' : 'animate-pulse'}`}
+        className={`shrink-0 rounded-full ${compact ? 'h-1.5 w-1.5' : 'h-2 w-2'} ${isPaused ? 'bg-white/50' : isLocalTurn ? 'bg-emerald-800' : 'bg-yellow-300'} ${isPaused ? '' : 'animate-pulse'}`}
       />
       {isPaused ? (
         <span className="font-semibold">Paused</span>
       ) : (
         <>
           <span className="font-bold">{isLocalTurn ? 'Your turn' : `${playerName}'s turn`}</span>
-          <span className="hidden opacity-70 sm:inline">·</span>
-          <span className={`text-center leading-snug opacity-80 ${compact ? 'text-[11px]' : 'text-[12px] sm:text-sm'}`}>
+          <span className={`opacity-70 ${compact ? 'inline' : 'hidden sm:inline'}`}>·</span>
+          <span className={`text-center leading-snug opacity-80 ${compact ? 'text-[10px]' : 'text-[12px] sm:text-sm'}`}>
             {compact ? PHASE_SHORT[phase] : PHASE_LABEL[phase]}
           </span>
         </>
