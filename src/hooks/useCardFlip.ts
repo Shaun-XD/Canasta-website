@@ -1,9 +1,12 @@
 import { useLayoutEffect, useRef } from 'react'
+import { isHandheldDevice } from '../lib/device'
 
 /** A position in the scroll-stable / transform-stable coordinate space. */
 interface FlipPosition {
   left: number
   top: number
+  width?: number
+  height?: number
 }
 
 /**
@@ -47,6 +50,32 @@ export const FLIP_DURATION_MS = 380
 /** Slower flights for bot/mock plays so the user can see what was moved. */
 export const BOT_FLIP_DURATION_MS = 900
 const FLIP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)' // ease-out
+/** Detached bot/remote flights: desktop 72; phones match the local hand. */
+const DETACHED_FLIGHT_WIDTH_DESKTOP = 72
+const DETACHED_FLIGHT_WIDTH_MAX_HANDHELD = 40
+const DETACHED_FLIGHT_WIDTH_FALLBACK = 32
+
+function rectWidth(r: DOMRect | FlipPosition): number {
+  return typeof r.width === 'number' && r.width > 8 ? r.width : 0
+}
+
+function localHandCardWidth(): number {
+  if (typeof document === 'undefined') return 0
+  const el = document.querySelector('[data-hand-card-id]')
+  if (!(el instanceof HTMLElement)) return 0
+  const w = el.getBoundingClientRect().width
+  return w > 8 ? w : 0
+}
+
+/** Phone bot flights follow the player's hand cards; desktop stays 72. */
+export function detachedFlightWidth(from: DOMRect | FlipPosition, to: DOMRect | FlipPosition): number {
+  if (!isHandheldDevice()) return DETACHED_FLIGHT_WIDTH_DESKTOP
+  const hand = localHandCardWidth()
+  if (hand > 8) return Math.round(Math.min(DETACHED_FLIGHT_WIDTH_MAX_HANDHELD, hand))
+  const measured = [rectWidth(from), rectWidth(to)].filter((w) => w > 0)
+  const raw = measured.length > 0 ? Math.min(...measured) : DETACHED_FLIGHT_WIDTH_FALLBACK
+  return Math.round(Math.min(DETACHED_FLIGHT_WIDTH_MAX_HANDHELD, raw))
+}
 
 /** Card ids whose next FLIP flight should use {@link BOT_FLIP_DURATION_MS}. */
 const pendingBotFlipIds = new Set<string>()
@@ -179,7 +208,7 @@ export function playDetachedCardFlight(opts: {
   /** Defaults to the fast human duration; bots pass {@link BOT_FLIP_DURATION_MS}. */
   durationMs?: number
 }): Promise<void> {
-  const width = opts.width ?? 72
+  const width = opts.width ?? detachedFlightWidth(opts.from, opts.to)
   const height = opts.height ?? Math.round(width * 1.4)
   const durationMs = opts.durationMs ?? FLIP_DURATION_MS
   const fromLeft = opts.from.left
@@ -207,7 +236,7 @@ export function playDetachedCardFlight(opts: {
   // Lightweight face-down visual (matches Card back colors) so we don't need
   // to mount a React Card just for a bot draw flight.
   ghost.innerHTML = opts.faceDown !== false
-    ? `<div style="width:100%;height:100%;background:#0f2a63;border:2px solid #93c5fd;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#93c5fd;font:700 14px/1 system-ui,sans-serif;">C</div>`
+    ? `<div style="width:100%;height:100%;background:#0f2a63;border:2px solid #93c5fd;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#93c5fd;font:700 ${width < 48 ? 10 : 14}px/1 system-ui,sans-serif;">C</div>`
     : `<div style="width:100%;height:100%;background:#fff;border:1px solid #d4d4d8;border-radius:8px;"></div>`
   document.body.appendChild(ghost)
 
