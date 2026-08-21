@@ -1,7 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
 
-import { isHandheldDevice } from '../lib/device'
-
 /** A position in the scroll-stable / transform-stable coordinate space. */
 interface FlipPosition {
   left: number
@@ -19,29 +17,6 @@ interface FlipPosition {
  * position across renders/parents without triggering extra re-renders.
  */
 const lastKnownRect = new Map<string, FlipPosition>()
-/** Held hand card — never FLIP (hide+arc on every slot swap is the vibration). */
-const frozenFlipIds = new Set<string>()
-const snapFlipIds = new Set<string>()
-let handReorderLive = false
-const SLOT_SLIDE_MS = 140
-
-export function freezeCardFlip(id: string) {
-  frozenFlipIds.add(id)
-  snapFlipIds.delete(id)
-}
-
-export function unfreezeCardFlip(id: string) {
-  frozenFlipIds.delete(id)
-  snapFlipIds.add(id)
-}
-
-export function beginHandReorder() {
-  handReorderLive = true
-}
-
-export function endHandReorder() {
-  handReorderLive = false
-}
 
 // Distinctly visible motion for human plays: long enough to read as real
 // travel, short enough to stay snappy.
@@ -49,22 +24,6 @@ export const FLIP_DURATION_MS = 380
 /** Slower flights for bot/mock plays so the user can see what was moved. */
 export const BOT_FLIP_DURATION_MS = 900
 const FLIP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)' // ease-out
-/** Detached bot/remote flights stay at table-card size on phones. Desktop uses 72. */
-const DETACHED_FLIGHT_WIDTH_MAX_HANDHELD = 40
-const DETACHED_FLIGHT_WIDTH_MAX_DESKTOP = 72
-const DETACHED_FLIGHT_WIDTH_FALLBACK = 32
-
-function rectWidth(r: DOMRect | FlipPosition): number {
-  return 'width' in r && typeof r.width === 'number' && r.width > 8 ? r.width : 0
-}
-
-function flightWidthFromRects(from: DOMRect | FlipPosition, to: DOMRect | FlipPosition): number {
-  const measured = [rectWidth(from), rectWidth(to)].filter((w) => w > 0)
-  const fallback = isHandheldDevice() ? DETACHED_FLIGHT_WIDTH_FALLBACK : DETACHED_FLIGHT_WIDTH_MAX_DESKTOP
-  const cap = isHandheldDevice() ? DETACHED_FLIGHT_WIDTH_MAX_HANDHELD : DETACHED_FLIGHT_WIDTH_MAX_DESKTOP
-  const raw = measured.length > 0 ? Math.min(...measured) : fallback
-  return Math.round(Math.min(cap, raw))
-}
 
 /** Card ids whose next FLIP flight should use {@link BOT_FLIP_DURATION_MS}. */
 const pendingBotFlipIds = new Set<string>()
@@ -197,7 +156,7 @@ export function playDetachedCardFlight(opts: {
   /** Defaults to the fast human duration; bots pass {@link BOT_FLIP_DURATION_MS}. */
   durationMs?: number
 }): Promise<void> {
-  const width = opts.width ?? (isHandheldDevice() ? flightWidthFromRects(opts.from, opts.to) : 72)
+  const width = opts.width ?? 72
   const height = opts.height ?? Math.round(width * 1.4)
   const durationMs = opts.durationMs ?? FLIP_DURATION_MS
   const fromLeft = opts.from.left
@@ -225,7 +184,7 @@ export function playDetachedCardFlight(opts: {
   // Lightweight face-down visual (matches Card back colors) so we don't need
   // to mount a React Card just for a bot draw flight.
   ghost.innerHTML = opts.faceDown !== false
-    ? `<div style="width:100%;height:100%;background:#0f2a63;border:1.5px solid #93c5fd;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#93c5fd;font:700 ${Math.max(8, Math.round(width * 0.28))}px/1 system-ui,sans-serif;">C</div>`
+    ? `<div style="width:100%;height:100%;background:#0f2a63;border:2px solid #93c5fd;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#93c5fd;font:700 14px/1 system-ui,sans-serif;">C</div>`
     : `<div style="width:100%;height:100%;background:#fff;border:1px solid #d4d4d8;border-radius:8px;"></div>`
   document.body.appendChild(ghost)
 
@@ -297,12 +256,6 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
-    if (frozenFlipIds.has(id)) return
-    if (snapFlipIds.has(id)) {
-      snapFlipIds.delete(id)
-      lastKnownRect.set(id, getScrollStablePosition(node))
-      return
-    }
 
     const prevPos = lastKnownRect.get(id)
     const nextPos = getScrollStablePosition(node)
@@ -313,12 +266,9 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
       const moved = Math.abs(dx) > 1 || Math.abs(dy) > 1
 
       if (moved && typeof node.animate === 'function') {
-        if (handReorderLive) {
-          playInPlaceSlide(node, dx)
-        } else {
-          playFlightGhost(node, dx, dy, consumeFlipDuration(id))
-        }
+        playFlightGhost(node, dx, dy, consumeFlipDuration(id))
       } else {
+        // No flight — drop any pending slow flag so it can't leak to a later move.
         pendingBotFlipIds.delete(id)
       }
     }
@@ -329,34 +279,10 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   return ref
 }
 
-/** Sideways shuffle in the fan — no hide, no arc. */
-function playInPlaceSlide(node: HTMLElement, dx: number): void {
-  const prior = activeSlotSlide.get(node)
-  if (prior) {
-    try {
-      prior.cancel()
-    } catch {
-      /* already finished */
-    }
-  }
-  if (typeof node.animate !== 'function' || Math.abs(dx) < 1) return
-  const anim = node.animate(
-    [{ transform: `translateX(${dx}px)` }, { transform: 'translateX(0)' }],
-    { duration: SLOT_SLIDE_MS, easing: 'ease-out', fill: 'none' },
-  )
-  activeSlotSlide.set(node, anim)
-  const cleanup = () => {
-    if (activeSlotSlide.get(node) === anim) activeSlotSlide.delete(node)
-  }
-  anim.addEventListener('finish', cleanup)
-  anim.addEventListener('cancel', cleanup)
-}
-
 /** Tracks how many in-flight ghosts are currently hiding a given node. */
 const flightHideCount = new WeakMap<HTMLElement, number>()
 /** Active Animation per node so a newer flight can cancel a stale one. */
 const activeFlight = new WeakMap<HTMLElement, Animation>()
-const activeSlotSlide = new WeakMap<HTMLElement, Animation>()
 
 /**
  * Plays the actual FLIP flight on a fixed-position clone of `node` appended

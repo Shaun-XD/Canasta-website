@@ -251,8 +251,8 @@ export function Table() {
     order: handOrder,
     draggingId,
     handlePointerDown: handleCardPointerDown,
+    handlePointerEnter: handleCardPointerEnter,
     applyOrder: applyHandOrder,
-    consumeClickIfDragged,
   } = useHandReorder(rawLocalHand.map((c) => c.id))
   const [handSortMode, setHandSortMode] = useState<HandSortMode | null>('suit')
 
@@ -649,15 +649,14 @@ export function Table() {
                     return (
                       <div
                         key={card.id}
-                        data-hand-card-id={card.id}
-                        onPointerDown={(e) => {
+                        onPointerDown={() => {
                           isReorderingRef.current = true
-                          handleCardPointerDown(card.id, e)
+                          handleCardPointerDown(card.id)
                           setHoveredHandId(card.id)
                         }}
                         onPointerEnter={() => {
-                          if (draggingId) return
-                          setHoveredHandId(card.id)
+                          handleCardPointerEnter(card.id)
+                          if (!isReorderingRef.current) setHoveredHandId(card.id)
                         }}
                         className={`relative shrink-0 touch-none transition-opacity duration-150 ${
                           draggingId === card.id ? 'opacity-90' : ''
@@ -674,10 +673,7 @@ export function Table() {
                           width={handCardWidth}
                           selected={selectedCardIds.includes(card.id)}
                           isNew={isRecentlyAcquired(card.id)}
-                          onClick={() => {
-                            if (consumeClickIfDragged()) return
-                            toggleSelectCard(card.id)
-                          }}
+                          onClick={() => toggleSelectCard(card.id)}
                           className="hover:!translate-y-0"
                           wrapperClassName={`transition-transform duration-150 ease-out ${
                             isActiveLift ? '-translate-y-2 scale-105' : ''
@@ -1107,15 +1103,14 @@ export function Table() {
                   return (
                     <div
                       key={card.id}
-                      data-hand-card-id={card.id}
-                      onPointerDown={(e) => {
+                      onPointerDown={() => {
                         isReorderingRef.current = true
-                        handleCardPointerDown(card.id, e)
+                        handleCardPointerDown(card.id)
                         setHoveredHandId(card.id)
                       }}
                       onPointerEnter={() => {
-                        if (draggingId) return
-                        setHoveredHandId(card.id)
+                        handleCardPointerEnter(card.id)
+                        if (!isReorderingRef.current) setHoveredHandId(card.id)
                       }}
                       className={`relative shrink-0 touch-none transition-opacity duration-150 ${
                         draggingId === card.id ? 'opacity-90' : ''
@@ -1132,10 +1127,7 @@ export function Table() {
                         width={HAND_CARD_WIDTH}
                         selected={selectedCardIds.includes(card.id)}
                         isNew={isRecentlyAcquired(card.id)}
-                        onClick={() => {
-                          if (consumeClickIfDragged()) return
-                          toggleSelectCard(card.id)
-                        }}
+                        onClick={() => toggleSelectCard(card.id)}
                         className="hover:!translate-y-0"
                         wrapperClassName={`transition-transform duration-150 ease-out ${
                           isActiveLift ? '-translate-y-4 scale-110' : ''
