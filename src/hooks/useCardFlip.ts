@@ -17,6 +17,29 @@ interface FlipPosition {
  * position across renders/parents without triggering extra re-renders.
  */
 const lastKnownRect = new Map<string, FlipPosition>()
+/** Held phone-hand card — hide+arc on every slot swap is the vibration. */
+const frozenFlipIds = new Set<string>()
+const snapFlipIds = new Set<string>()
+let handReorderLive = false
+const SLOT_SLIDE_MS = 140
+
+export function freezeCardFlip(id: string) {
+  frozenFlipIds.add(id)
+  snapFlipIds.delete(id)
+}
+
+export function unfreezeCardFlip(id: string) {
+  frozenFlipIds.delete(id)
+  snapFlipIds.add(id)
+}
+
+export function beginHandReorder() {
+  handReorderLive = true
+}
+
+export function endHandReorder() {
+  handReorderLive = false
+}
 
 // Distinctly visible motion for human plays: long enough to read as real
 // travel, short enough to stay snappy.
@@ -256,6 +279,12 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
+    if (frozenFlipIds.has(id)) return
+    if (snapFlipIds.has(id)) {
+      snapFlipIds.delete(id)
+      lastKnownRect.set(id, getScrollStablePosition(node))
+      return
+    }
 
     const prevPos = lastKnownRect.get(id)
     const nextPos = getScrollStablePosition(node)
@@ -266,7 +295,11 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
       const moved = Math.abs(dx) > 1 || Math.abs(dy) > 1
 
       if (moved && typeof node.animate === 'function') {
-        playFlightGhost(node, dx, dy, consumeFlipDuration(id))
+        if (handReorderLive) {
+          playInPlaceSlide(node, dx)
+        } else {
+          playFlightGhost(node, dx, dy, consumeFlipDuration(id))
+        }
       } else {
         // No flight — drop any pending slow flag so it can't leak to a later move.
         pendingBotFlipIds.delete(id)
@@ -277,6 +310,31 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   })
 
   return ref
+}
+
+const activeSlotSlide = new WeakMap<HTMLElement, Animation>()
+
+/** Sideways shuffle in the fan — no hide, no arc. Phone reorder only. */
+function playInPlaceSlide(node: HTMLElement, dx: number): void {
+  const prior = activeSlotSlide.get(node)
+  if (prior) {
+    try {
+      prior.cancel()
+    } catch {
+      /* already finished */
+    }
+  }
+  if (typeof node.animate !== 'function' || Math.abs(dx) < 1) return
+  const anim = node.animate(
+    [{ transform: `translateX(${dx}px)` }, { transform: 'translateX(0)' }],
+    { duration: SLOT_SLIDE_MS, easing: 'ease-out', fill: 'none' },
+  )
+  activeSlotSlide.set(node, anim)
+  const cleanup = () => {
+    if (activeSlotSlide.get(node) === anim) activeSlotSlide.delete(node)
+  }
+  anim.addEventListener('finish', cleanup)
+  anim.addEventListener('cancel', cleanup)
 }
 
 /** Tracks how many in-flight ghosts are currently hiding a given node. */

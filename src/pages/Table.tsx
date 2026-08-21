@@ -250,16 +250,22 @@ export function Table() {
   const {
     order: handOrder,
     draggingId,
+    dragPoint,
     handlePointerDown: handleCardPointerDown,
     handlePointerEnter: handleCardPointerEnter,
     applyOrder: applyHandOrder,
-  } = useHandReorder(rawLocalHand.map((c) => c.id))
+    consumeClickIfDragged,
+  } = useHandReorder(rawLocalHand.map((c) => c.id), { handheld })
   const [handSortMode, setHandSortMode] = useState<HandSortMode | null>('suit')
 
   useEffect(() => {
-    if (draggingId == null) isReorderingRef.current = false
-    else setHandSortMode(null) // manual drag clears the active auto-sort highlight
-  }, [draggingId])
+    if (draggingId == null) {
+      isReorderingRef.current = false
+      return
+    }
+    setHandSortMode(null) // manual drag clears the active auto-sort highlight
+    if (handheld) setHoveredHandId(null)
+  }, [draggingId, handheld])
 
   if (!room || room.roomId !== roomId) return <Navigate to="/" replace />
   if (room.status === 'lobby') return <Navigate to={`/lobby/${roomId}`} replace />
@@ -645,40 +651,62 @@ export function Table() {
               >
                 <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
                   {orderedLocalHand.map((card, i) => {
+                    const isDragging = draggingId === card.id
                     const isActiveLift = draggingId === card.id || (!draggingId && hoveredHandId === card.id)
+                    const marginLeft = i === 0 ? 0 : -handOverlap
                     return (
                       <div
                         key={card.id}
-                        onPointerDown={() => {
+                        data-hand-card-id={card.id}
+                        onPointerDown={(e) => {
                           isReorderingRef.current = true
-                          handleCardPointerDown(card.id)
-                          setHoveredHandId(card.id)
+                          handleCardPointerDown(card.id, e)
                         }}
                         onPointerEnter={() => {
-                          handleCardPointerEnter(card.id)
-                          if (!isReorderingRef.current) setHoveredHandId(card.id)
+                          if (draggingId) return
+                          setHoveredHandId(card.id)
                         }}
-                        className={`relative shrink-0 touch-none transition-opacity duration-150 ${
-                          draggingId === card.id ? 'opacity-90' : ''
-                        }`}
+                        className="relative shrink-0 touch-none"
                         style={{
-                          marginLeft: i === 0 ? 0 : -handOverlap,
-                          zIndex: isActiveLift ? 80 : i,
+                          width: handCardWidth,
+                          height: Math.round(handCardWidth * 1.4),
+                          marginLeft,
+                          zIndex: isDragging ? 80 : isActiveLift ? 80 : i,
                         }}
                       >
-                        <AnimatedCard
-                          flipId={card.id}
-                          rank={card.rank}
-                          suit={card.suit}
-                          width={handCardWidth}
-                          selected={selectedCardIds.includes(card.id)}
-                          isNew={isRecentlyAcquired(card.id)}
-                          onClick={() => toggleSelectCard(card.id)}
-                          className="hover:!translate-y-0"
-                          wrapperClassName={`transition-transform duration-150 ease-out ${
-                            isActiveLift ? '-translate-y-2 scale-105' : ''
-                          }`}
-                        />
+                        <div
+                          className="leading-none"
+                          style={
+                            isDragging && dragPoint
+                              ? {
+                                  position: 'fixed',
+                                  left: dragPoint.left,
+                                  top: dragPoint.top,
+                                  width: handCardWidth,
+                                  margin: 0,
+                                  zIndex: 500,
+                                  pointerEvents: 'none',
+                                }
+                              : undefined
+                          }
+                        >
+                          <AnimatedCard
+                            flipId={card.id}
+                            rank={card.rank}
+                            suit={card.suit}
+                            width={handCardWidth}
+                            selected={selectedCardIds.includes(card.id)}
+                            isNew={isRecentlyAcquired(card.id)}
+                            onClick={() => {
+                              if (consumeClickIfDragged()) return
+                              toggleSelectCard(card.id)
+                            }}
+                            className="hover:!translate-y-0"
+                            wrapperClassName={`transition-transform duration-150 ease-out ${
+                              isActiveLift && !isDragging ? '-translate-y-2 scale-105' : ''
+                            }`}
+                          />
+                        </div>
                       </div>
                     )
                   })}
