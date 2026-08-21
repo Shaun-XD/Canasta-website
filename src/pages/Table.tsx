@@ -692,7 +692,7 @@ export function Table() {
             </div>
 
             <div className="play-dock-tools">
-              <div className="shrink-0">
+              <div className="shrink-0 self-center">
                 <HandSortButtons
                   activeMode={handSortMode}
                   onSortSuit={handleSortHandBySuit}

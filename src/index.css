@@ -781,13 +781,13 @@ html.device-handheld .discard-fan {
   }
 
   html.device-handheld .hand-sort-buttons {
-    flex-direction: row;
-    gap: 0.12rem;
+    flex-direction: column;
+    gap: 0.15rem;
   }
 
   html.device-handheld .hand-sort-buttons button {
-    height: 1.45rem;
-    width: 1.45rem;
+    height: 1.55rem;
+    width: 1.55rem;
   }
 
   html.device-handheld .action-btn-stack {
