@@ -251,7 +251,6 @@ export function Table() {
     order: handOrder,
     draggingId,
     handlePointerDown: handleCardPointerDown,
-    handlePointerEnter: handleCardPointerEnter,
     applyOrder: applyHandOrder,
     consumeClickIfDragged,
   } = useHandReorder(rawLocalHand.map((c) => c.id))
@@ -657,8 +656,8 @@ export function Table() {
                           setHoveredHandId(card.id)
                         }}
                         onPointerEnter={() => {
-                          handleCardPointerEnter(card.id)
-                          if (!isReorderingRef.current) setHoveredHandId(card.id)
+                          if (draggingId) return
+                          setHoveredHandId(card.id)
                         }}
                         className={`relative shrink-0 touch-none transition-opacity duration-150 ${
                           draggingId === card.id ? 'opacity-90' : ''
@@ -1115,8 +1114,8 @@ export function Table() {
                         setHoveredHandId(card.id)
                       }}
                       onPointerEnter={() => {
-                        handleCardPointerEnter(card.id)
-                        if (!isReorderingRef.current) setHoveredHandId(card.id)
+                        if (draggingId) return
+                        setHoveredHandId(card.id)
                       }}
                       className={`relative shrink-0 touch-none transition-opacity duration-150 ${
                         draggingId === card.id ? 'opacity-90' : ''
