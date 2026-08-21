@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { act, render, cleanup } from '@testing-library/react'
 import { useState } from 'react'
 import { AnimatedCard } from '../components/AnimatedCard'
-import { seedFlipOrigin } from './useCardFlip'
+import { seedFlipOrigin, freezeCardFlip, unfreezeCardFlip } from './useCardFlip'
 import { useHandReorder } from './useHandReorder'
 
 /**
@@ -235,6 +235,30 @@ describe('transform-stability (regression: discard pile disappearing on hover)',
       rerender(<Harness tick={1} />)
     })
 
+    expect(animateSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('freeze during hand drag', () => {
+  it('does not play a flight while frozen, and does not fly back on unfreeze', async () => {
+    const rectA = rectFrom({ top: 100, left: 40, width: 40, height: 56 })
+    const rectB = rectFrom({ top: 100, left: 280, width: 40, height: 56 })
+    const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rectA)
+
+    const { rerender } = render(<AnimatedCard flipId="frozen-drag-card" rank="A" suit="hearts" />)
+    expect(animateSpy).not.toHaveBeenCalled()
+
+    freezeCardFlip('frozen-drag-card')
+    spy.mockReturnValue(rectB)
+    await act(async () => {
+      rerender(<AnimatedCard flipId="frozen-drag-card" rank="A" suit="hearts" />)
+    })
+    expect(animateSpy).not.toHaveBeenCalled()
+
+    unfreezeCardFlip('frozen-drag-card')
+    await act(async () => {
+      rerender(<AnimatedCard flipId="frozen-drag-card" rank="A" suit="hearts" />)
+    })
     expect(animateSpy).not.toHaveBeenCalled()
   })
 })

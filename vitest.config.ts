@@ -10,6 +10,7 @@ export default defineConfig({
     environmentMatchGlobs: [
       ['src/engine/**', 'node'],
       ['**/onlineInvariants.test.ts', 'node'],
+      ['src/hooks/useHandReorder.test.ts', 'node'],
     ],
   },
 })

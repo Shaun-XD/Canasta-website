@@ -19,6 +19,22 @@ interface FlipPosition {
  * position across renders/parents without triggering extra re-renders.
  */
 const lastKnownRect = new Map<string, FlipPosition>()
+/** Ids currently being finger-dragged — never FLIP these (the drag translate would look like a move). */
+const frozenFlipIds = new Set<string>()
+/** After a drag, write the settled slot into lastKnownRect without playing a flight. */
+const snapFlipIds = new Set<string>()
+
+/** Pause FLIP for a card while the player is dragging it in the hand. */
+export function freezeCardFlip(id: string) {
+  frozenFlipIds.add(id)
+  snapFlipIds.delete(id)
+}
+
+/** Resume FLIP after a hand drag, snapping to the current slot (no fly-back). */
+export function unfreezeCardFlip(id: string) {
+  frozenFlipIds.delete(id)
+  snapFlipIds.add(id)
+}
 
 // Distinctly visible motion for human plays: long enough to read as real
 // travel, short enough to stay snappy.
@@ -274,6 +290,12 @@ export function useCardFlip<T extends HTMLElement>(id: string) {
   useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
+    if (frozenFlipIds.has(id)) return
+    if (snapFlipIds.has(id)) {
+      snapFlipIds.delete(id)
+      lastKnownRect.set(id, getScrollStablePosition(node))
+      return
+    }
 
     const prevPos = lastKnownRect.get(id)
     const nextPos = getScrollStablePosition(node)

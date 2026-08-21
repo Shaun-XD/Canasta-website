@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { freezeCardFlip, unfreezeCardFlip } from './useCardFlip'
 
 /**
  * Lightweight, dependency-free drag-to-reorder for the player's own hand
@@ -6,17 +7,31 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
  * touches game rules or the store's hand array, which stays sorted by rank
  * for everyone else's bookkeeping (AI, discard logic, etc).
  *
- * Pointer model: the held card follows the finger/cursor (`dragOffset`).
- * Slots under the pointer swap live. Touch devices never fire `pointerenter`
- * while a finger is down, so reorder also hit-tests `elementsFromPoint` on
- * `pointermove`. A tap that never crosses the drag threshold still counts
- * as a click (select); a real drag swallows the following click.
+ * Pointer model: the held card is `position: fixed` at `dragPoint`
+ * (`client − grab offset`, viewport pixels). Slot swaps must not feed a
+ * layout `translate()`, or a squeezed phone fan / FLIP ancestor multiplies
+ * the delta and the card runs away from the finger. Touch devices never
+ * fire `pointerenter` while a finger is down, so reorder also hit-tests
+ * `elementsFromPoint` on `pointermove`. A tap that never crosses the drag
+ * threshold still counts as a click (select); a real drag swallows the
+ * following click.
  *
  * Auto-arrange buttons call {@link applyOrder} with a new id sequence;
  * FLIP then flies each card into its new slot.
  */
 
 const DRAG_THRESHOLD_PX = 8
+
+export type DragPoint = { left: number; top: number }
+
+/** Viewport top-left of the card so the grab point stays under the pointer. */
+export function pointerToDragPoint(
+  clientX: number,
+  clientY: number,
+  grabOffset: { x: number; y: number },
+): DragPoint {
+  return { left: clientX - grabOffset.x, top: clientY - grabOffset.y }
+}
 
 function cardIdAtPoint(x: number, y: number, skipId: string): string | null {
   if (typeof document === 'undefined' || typeof document.elementsFromPoint !== 'function') {
@@ -35,8 +50,9 @@ export function useHandReorder(cardIds: string[]) {
   const [order, setOrder] = useState<string[]>(cardIds)
   const draggingIdRef = useRef<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
-  const originRef = useRef({ x: 0, y: 0 })
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const grabOffsetRef = useRef({ x: 0, y: 0 })
+  const originClientRef = useRef({ x: 0, y: 0 })
+  const [dragPoint, setDragPoint] = useState<DragPoint | null>(null)
   const movedRef = useRef(false)
   const suppressClickRef = useRef(false)
 
@@ -87,12 +103,19 @@ export function useHandReorder(cardIds: string[]) {
     },
   ) {
     draggingIdRef.current = id
+    freezeCardFlip(id)
     setDraggingId(id)
     movedRef.current = false
-    setDragOffset({ x: 0, y: 0 })
-    if (!event) return
-    originRef.current = { x: event.clientX, y: event.clientY }
+    if (!event) {
+      setDragPoint(null)
+      return
+    }
     const el = event.currentTarget
+    const rect =
+      el instanceof HTMLElement ? el.getBoundingClientRect() : { left: event.clientX, top: event.clientY }
+    grabOffsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    originClientRef.current = { x: event.clientX, y: event.clientY }
+    setDragPoint({ left: rect.left, top: rect.top })
     if (el instanceof HTMLElement && typeof el.setPointerCapture === 'function') {
       try {
         el.setPointerCapture(event.pointerId)
@@ -108,10 +131,12 @@ export function useHandReorder(cardIds: string[]) {
   }
 
   function endDrag() {
+    const id = draggingIdRef.current
     if (movedRef.current) suppressClickRef.current = true
     draggingIdRef.current = null
+    if (id) unfreezeCardFlip(id)
     setDraggingId(null)
-    setDragOffset({ x: 0, y: 0 })
+    setDragPoint(null)
   }
 
   /** True when the pointerup click belongs to a drag, not a tap-to-select. */
@@ -141,12 +166,14 @@ export function useHandReorder(cardIds: string[]) {
     function onMove(event: PointerEvent) {
       const dragId = draggingIdRef.current
       if (!dragId) return
-      const dx = event.clientX - originRef.current.x
-      const dy = event.clientY - originRef.current.y
+      const dx = event.clientX - originClientRef.current.x
+      const dy = event.clientY - originClientRef.current.y
       if (!movedRef.current && dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return
       movedRef.current = true
       suppressClickRef.current = true
-      setDragOffset({ x: dx, y: dy })
+      setDragPoint(
+        pointerToDragPoint(event.clientX, event.clientY, grabOffsetRef.current),
+      )
       const overId = cardIdAtPoint(event.clientX, event.clientY, dragId)
       if (overId) swapDraggedOver(overId)
     }
@@ -164,7 +191,7 @@ export function useHandReorder(cardIds: string[]) {
   return {
     order,
     draggingId,
-    dragOffset,
+    dragPoint,
     handlePointerDown,
     handlePointerEnter,
     applyOrder,
