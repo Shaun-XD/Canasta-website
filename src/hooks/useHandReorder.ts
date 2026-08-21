@@ -6,11 +6,19 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
  * touches game rules or the store's hand array, which stays sorted by rank
  * for everyone else's bookkeeping (AI, discard logic, etc).
  *
- * Pointer model: the held card follows the finger/cursor (`dragOffset`).
- * Slots under the pointer swap live. Touch devices never fire `pointerenter`
- * while a finger is down, so reorder also hit-tests `elementsFromPoint` on
- * `pointermove`. A tap that never crosses the drag threshold still counts
- * as a click (select); a real drag swallows the following click.
+ * Implementation: plain pointer events, no drag/drop library. While a card
+ * is held down, whichever other card the pointer moves over swaps places
+ * with it in the local order (a common "live swap" reorder UX). Actual
+ * card movement is animated by the existing FLIP `useCardFlip` hook, since
+ * every card keeps rendering through `AnimatedCard` with the same `flipId`
+ * regardless of its position in the row.
+ *
+ * Touch devices never fire `pointerenter` while a finger is down, so reorder
+ * also hit-tests `elementsFromPoint` on `pointermove`. The held card is NOT
+ * translated out of the fan — that left a hole and bunched the rest.
+ *
+ * A tap that never crosses the drag threshold still counts as a click
+ * (select); a real drag swallows the following click.
  *
  * Auto-arrange buttons call {@link applyOrder} with a new id sequence;
  * FLIP then flies each card into its new slot.
@@ -36,7 +44,6 @@ export function useHandReorder(cardIds: string[]) {
   const draggingIdRef = useRef<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const originRef = useRef({ x: 0, y: 0 })
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const movedRef = useRef(false)
   const suppressClickRef = useRef(false)
 
@@ -89,15 +96,15 @@ export function useHandReorder(cardIds: string[]) {
     draggingIdRef.current = id
     setDraggingId(id)
     movedRef.current = false
-    setDragOffset({ x: 0, y: 0 })
-    if (!event) return
-    originRef.current = { x: event.clientX, y: event.clientY }
-    const el = event.currentTarget
-    if (el instanceof HTMLElement && typeof el.setPointerCapture === 'function') {
-      try {
-        el.setPointerCapture(event.pointerId)
-      } catch {
-        /* setPointerCapture can throw if the pointer is already gone */
+    if (event) {
+      originRef.current = { x: event.clientX, y: event.clientY }
+      const el = event.currentTarget
+      if (el instanceof HTMLElement && typeof el.setPointerCapture === 'function') {
+        try {
+          el.setPointerCapture(event.pointerId)
+        } catch {
+          /* setPointerCapture can throw if the pointer is already gone */
+        }
       }
     }
   }
@@ -111,7 +118,6 @@ export function useHandReorder(cardIds: string[]) {
     if (movedRef.current) suppressClickRef.current = true
     draggingIdRef.current = null
     setDraggingId(null)
-    setDragOffset({ x: 0, y: 0 })
   }
 
   /** True when the pointerup click belongs to a drag, not a tap-to-select. */
@@ -125,7 +131,6 @@ export function useHandReorder(cardIds: string[]) {
   function applyOrder(nextIds: string[]) {
     const held = new Set(cardIds)
     const cleaned = nextIds.filter((id) => held.has(id))
-    // Append any missing ids (shouldn't happen) to stay in sync with the hand.
     for (const id of cardIds) {
       if (!cleaned.includes(id)) cleaned.push(id)
     }
@@ -146,7 +151,6 @@ export function useHandReorder(cardIds: string[]) {
       if (!movedRef.current && dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return
       movedRef.current = true
       suppressClickRef.current = true
-      setDragOffset({ x: dx, y: dy })
       const overId = cardIdAtPoint(event.clientX, event.clientY, dragId)
       if (overId) swapDraggedOver(overId)
     }
@@ -164,7 +168,6 @@ export function useHandReorder(cardIds: string[]) {
   return {
     order,
     draggingId,
-    dragOffset,
     handlePointerDown,
     handlePointerEnter,
     applyOrder,
