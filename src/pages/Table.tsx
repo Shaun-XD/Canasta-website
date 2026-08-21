@@ -364,9 +364,13 @@ export function Table() {
   const handPeek = handFan.peek
   const handOverlap = handCardWidth - handPeek
   const handFanWidth = handFan.fanWidth
-  const hubCardWidth = Math.round(
-    Math.min(DISCARD_CARD_WIDTH, Math.max(viewportHeight <= 540 ? 30 : 48, handCardWidth * 0.82)),
-  )
+  // Stock and discard-pile faces share one size. On the phone dock they match
+  // the 46px action buttons (width = height × 100/140).
+  const hubCardWidth = handheld
+    ? Math.round(46 * (100 / 140))
+    : Math.round(
+        Math.min(DISCARD_CARD_WIDTH, Math.max(viewportHeight <= 540 ? 30 : 48, handCardWidth * 0.82)),
+      )
   const meldCardWidthCap = Math.max(32, Math.round(handCardWidth * 0.86))
   const discardFanMax = discardFanWidth(hubCardWidth, DISCARD_VISIBLE_CARDS)
 
@@ -701,7 +705,7 @@ export function Table() {
               </div>
               <div
                 key={feedback?.token ?? 'stable'}
-                className={`action-stack flex shrink-0 flex-row items-center gap-1 self-end ${
+                className={`action-stack flex shrink-0 flex-row items-center gap-1 self-center ${
                   feedback ? 'animate-shake' : ''
                 }`}
               >

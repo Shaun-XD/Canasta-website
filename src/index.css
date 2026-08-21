@@ -546,7 +546,7 @@ html.device-handheld .play-dock-row {
   position: relative;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   gap: 0.45rem 0.55rem;
 }
 
@@ -566,13 +566,13 @@ html.device-handheld .play-dock-piles {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  align-items: flex-end;
+  align-items: center;
   gap: 0.28rem;
 }
 
 html.device-handheld .stock-btn {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
   margin: 0;
   padding: 0;
@@ -586,7 +586,7 @@ html.device-handheld .stock-btn {
 html.device-handheld .discard-slot,
 html.device-handheld .discard-fan {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   padding: 0;
   line-height: 0;
 }
@@ -600,9 +600,9 @@ html.device-handheld .play-dock-hand {
 html.device-handheld .play-dock-tools {
   display: flex;
   flex: 0 0 auto;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  gap: 0.2rem;
+  gap: 0.55rem;
 }
 
 html.device-handheld .play-dock-help:empty {
@@ -718,7 +718,7 @@ html.device-handheld .discard-fan {
 
   html.device-handheld .play-dock {
     gap: 0;
-    padding: 0 0.25rem 0.06rem;
+    padding: 0.28rem 0.25rem;
     overflow: visible;
   }
 
@@ -741,7 +741,7 @@ html.device-handheld .discard-fan {
     position: relative;
     z-index: 12;
     flex-wrap: nowrap;
-    align-items: flex-end;
+    align-items: center;
     gap: 0.25rem;
     overflow: visible;
   }
@@ -749,6 +749,7 @@ html.device-handheld .discard-fan {
   html.device-handheld .play-dock-local {
     position: static;
     flex: 0 0 auto;
+    align-self: center;
   }
 
   html.device-handheld .play-dock-local-name {
@@ -757,7 +758,7 @@ html.device-handheld .discard-fan {
 
   html.device-handheld .play-dock-piles {
     flex: 0 0 auto;
-    align-items: flex-end;
+    align-items: center;
     gap: 0.18rem;
   }
 
@@ -773,10 +774,10 @@ html.device-handheld .discard-fan {
   }
 
   html.device-handheld .play-dock-tools {
-    gap: 0.15rem;
+    gap: 0.65rem;
     margin-right: 0;
     padding: 0;
-    align-items: flex-end;
+    align-items: center;
     justify-content: flex-end;
   }
 
@@ -791,6 +792,9 @@ html.device-handheld .discard-fan {
   }
 
   html.device-handheld .action-btn-stack {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 2.15rem;
     min-width: 2.15rem;
     max-width: 2.15rem;
@@ -800,13 +804,14 @@ html.device-handheld .discard-fan {
     font-size: 0.52rem;
     line-height: 1;
     border-radius: 0.32rem;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   }
 
   html.device-handheld .action-stack {
     width: auto;
     flex-direction: row;
     gap: 0.15rem;
-    align-self: flex-end;
+    align-self: center;
   }
 
   html.device-handheld .play-dock-discard.action-btn-stack {
