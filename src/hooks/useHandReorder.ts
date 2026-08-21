@@ -7,10 +7,10 @@ import { beginHandReorder, endHandReorder, freezeCardFlip, unfreezeCardFlip } fr
  * Desktop: live-swap on pointerenter (main). Cards stay in the fan; FLIP
  * slides neighbors. No follow-the-pointer, no freeze.
  *
- * Phone: the visual is `position: fixed` at `dragPoint` (viewport pixels)
- * so a squeezed fan cannot multiply the delta. The flex slot stays in the
- * row (explicit width/height) so the fan does not split. Insert by midpoint
- * X. Held-card FLIP is frozen; neighbors slide sideways in place.
+ * Phone: do not reshuffle during the drag (that ate the right side of the
+ * fan). A body-level preview follows the finger; the in-row card stays put
+ * and is only hidden. Insert index uses each card's visible peek band, not
+ * the overlapping full-face midpoint. Order commits on drop.
  */
 
 const DRAG_THRESHOLD_PX = 8
@@ -34,6 +34,20 @@ export function insertIndexForPointer(clientX: number, sortedMids: number[]): nu
   return sortedMids.length
 }
 
+/**
+ * Midpoint of each card's visible strip in an overlapped fan.
+ * Full-face `left + width/2` is wrong here: faces stack, so those centers
+ * sit under the next card and the right side of the hand never wins.
+ */
+export function peekBandMidpoints(slots: { left: number; width: number }[]): number[] {
+  const sorted = [...slots].sort((a, b) => a.left - b.left)
+  return sorted.map((slot, i) => {
+    const next = sorted[i + 1]
+    const right = next ? next.left : slot.left + slot.width
+    return (slot.left + right) / 2
+  })
+}
+
 export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean }) {
   const handheld = opts?.handheld === true
   const handheldRef = useRef(handheld)
@@ -48,6 +62,7 @@ export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean })
   const grabOffsetRef = useRef({ x: 0, y: 0 })
   const dragPointRef = useRef<DragPoint | null>(null)
   const [dragPoint, setDragPoint] = useState<DragPoint | null>(null)
+  const lastClientXRef = useRef(0)
   const movedRef = useRef(false)
   const suppressClickRef = useRef(false)
   const wasDraggingRef = useRef(false)
@@ -94,15 +109,15 @@ export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean })
     if (!dragId) return
     const prev = orderRef.current
     const nodes = document.querySelectorAll('[data-hand-card-id]')
-    const mids: number[] = []
+    const slots: { left: number; width: number }[] = []
     for (const node of nodes) {
       if (!(node instanceof HTMLElement)) continue
       const id = node.getAttribute('data-hand-card-id')
       if (!id || id === dragId) continue
       const r = node.getBoundingClientRect()
-      mids.push(r.left + r.width / 2)
+      slots.push({ left: r.left, width: r.width })
     }
-    mids.sort((a, b) => a - b)
+    const mids = peekBandMidpoints(slots)
     const insertAt = insertIndexForPointer(clientX, mids)
     const without = prev.filter((id) => id !== dragId)
     const next = [...without]
@@ -133,14 +148,14 @@ export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean })
       return
     }
     originRef.current = { x: event.clientX, y: event.clientY }
+    lastClientXRef.current = event.clientX
     const el = event.currentTarget
     if (handheldRef.current) {
       const rect =
         el instanceof HTMLElement ? el.getBoundingClientRect() : { left: event.clientX, top: event.clientY }
       grabOffsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-      const origin = { left: rect.left, top: rect.top }
-      dragPointRef.current = origin
-      setDragPoint(origin)
+      dragPointRef.current = null
+      setDragPoint(null)
     }
     if (handheldRef.current && el instanceof HTMLElement && typeof el.setPointerCapture === 'function') {
       try {
@@ -158,7 +173,11 @@ export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean })
 
   function endDrag() {
     const id = draggingIdRef.current
-    if (movedRef.current) suppressClickRef.current = true
+    const moved = movedRef.current
+    if (moved) suppressClickRef.current = true
+    if (handheldRef.current && moved) {
+      reorderByClientX(lastClientXRef.current)
+    }
     draggingIdRef.current = null
     if (handheldRef.current && id) unfreezeCardFlip(id)
     dragPointRef.current = null
@@ -197,10 +216,10 @@ export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean })
       movedRef.current = true
       suppressClickRef.current = true
       event.preventDefault()
+      lastClientXRef.current = event.clientX
       const nextPoint = pointerToDragPoint(event.clientX, event.clientY, grabOffsetRef.current)
       dragPointRef.current = nextPoint
       setDragPoint(nextPoint)
-      reorderByClientX(event.clientX)
     }
 
     if (handheld) {

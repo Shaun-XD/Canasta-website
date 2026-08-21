@@ -278,7 +278,6 @@ body {
   overflow-x: visible;
   overflow-y: visible;
   padding: 0.2rem 0.25rem 0;
-  -webkit-overflow-scrolling: touch;
 }
 
 .discard-fan {
@@ -627,6 +626,13 @@ html.device-handheld .hand-rail-swipe {
   justify-content: flex-start;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+html.device-handheld.hand-reordering .hand-rail,
+html.device-handheld.hand-reordering .hand-rail-swipe,
+html.device-handheld.hand-reordering .play-dock-hand {
+  overflow: visible;
 }
 
 html.device-handheld .hand-rail-swipe::-webkit-scrollbar {

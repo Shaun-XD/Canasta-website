@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Navigate, useParams } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import { PlayerAvatar } from '../components/PlayerAvatar'
@@ -28,6 +29,34 @@ const HAND_COMFORT_PEEK = 48
 const HAND_MIN_PEEK = 12
 const HAND_REF_WIDTH = HAND_CARD_WIDTH + (HAND_BASE_COUNT - 1) * HAND_COMFORT_PEEK
 const HAND_MAX_FAN_WIDTH = HAND_CARD_WIDTH + (HAND_BASE_COUNT - 1) * Math.round(HAND_COMFORT_PEEK * 1.5)
+
+function PhoneHandDragPreview({
+  card,
+  point,
+  width,
+  selected,
+}: {
+  card: CardModel | undefined
+  point: { left: number; top: number }
+  width: number
+  selected: boolean
+}) {
+  if (!card) return null
+  return (
+    <div
+      className="pointer-events-none"
+      style={{
+        position: 'fixed',
+        left: point.left,
+        top: point.top,
+        width,
+        zIndex: 2147483000,
+      }}
+    >
+      <Card rank={card.rank} suit={card.suit} width={width} selected={selected} className="hover:!translate-y-0" />
+    </div>
+  )
+}
 
 export function Table() {
   const handheld = useIsHandheld()
@@ -261,11 +290,15 @@ export function Table() {
   useEffect(() => {
     if (draggingId == null) {
       isReorderingRef.current = false
+      document.documentElement.classList.remove('hand-reordering')
       return
     }
     setHandSortMode(null) // manual drag clears the active auto-sort highlight
-    if (handheld) setHoveredHandId(null)
-  }, [draggingId, handheld])
+    if (handheld) {
+      setHoveredHandId(null)
+      if (dragPoint) document.documentElement.classList.add('hand-reordering')
+    }
+  }, [draggingId, handheld, dragPoint])
 
   if (!room || room.roomId !== roomId) return <Navigate to="/" replace />
   if (room.status === 'lobby') return <Navigate to={`/lobby/${roomId}`} replace />
@@ -652,8 +685,8 @@ export function Table() {
                 <div className="relative mx-auto flex items-end justify-center" style={{ width: handFanWidth }}>
                   {orderedLocalHand.map((card, i) => {
                     const isDragging = draggingId === card.id
-                    const isActiveLift = draggingId === card.id || (!draggingId && hoveredHandId === card.id)
-                    const marginLeft = i === 0 ? 0 : -handOverlap
+                    const isLifted = isDragging && dragPoint != null
+                    const isActiveLift = isDragging || (!draggingId && hoveredHandId === card.id)
                     return (
                       <div
                         key={card.id}
@@ -668,45 +701,27 @@ export function Table() {
                         }}
                         className="relative shrink-0 touch-none"
                         style={{
-                          width: handCardWidth,
-                          height: Math.round(handCardWidth * 1.4),
-                          marginLeft,
-                          zIndex: isDragging ? 80 : isActiveLift ? 80 : i,
+                          marginLeft: i === 0 ? 0 : -handOverlap,
+                          zIndex: isActiveLift ? 80 : i,
+                          visibility: isLifted ? 'hidden' : undefined,
                         }}
                       >
-                        <div
-                          className="leading-none"
-                          style={
-                            isDragging && dragPoint
-                              ? {
-                                  position: 'fixed',
-                                  left: dragPoint.left,
-                                  top: dragPoint.top,
-                                  width: handCardWidth,
-                                  margin: 0,
-                                  zIndex: 500,
-                                  pointerEvents: 'none',
-                                }
-                              : undefined
-                          }
-                        >
-                          <AnimatedCard
-                            flipId={card.id}
-                            rank={card.rank}
-                            suit={card.suit}
-                            width={handCardWidth}
-                            selected={selectedCardIds.includes(card.id)}
-                            isNew={isRecentlyAcquired(card.id)}
-                            onClick={() => {
-                              if (consumeClickIfDragged()) return
-                              toggleSelectCard(card.id)
-                            }}
-                            className="hover:!translate-y-0"
-                            wrapperClassName={`transition-transform duration-150 ease-out ${
-                              isActiveLift && !isDragging ? '-translate-y-2 scale-105' : ''
-                            }`}
-                          />
-                        </div>
+                        <AnimatedCard
+                          flipId={card.id}
+                          rank={card.rank}
+                          suit={card.suit}
+                          width={handCardWidth}
+                          selected={selectedCardIds.includes(card.id)}
+                          isNew={isRecentlyAcquired(card.id)}
+                          onClick={() => {
+                            if (consumeClickIfDragged()) return
+                            toggleSelectCard(card.id)
+                          }}
+                          className="hover:!translate-y-0"
+                          wrapperClassName={`transition-transform duration-150 ease-out ${
+                            isActiveLift && !isLifted ? '-translate-y-2 scale-105' : ''
+                          }`}
+                        />
                       </div>
                     )
                   })}
@@ -825,6 +840,17 @@ export function Table() {
       )}
 
       {!localPlayer && null}
+      {dragPoint && draggingId
+        ? createPortal(
+            <PhoneHandDragPreview
+              card={orderedLocalHand.find((c) => c.id === draggingId)}
+              point={dragPoint}
+              width={handCardWidth}
+              selected={selectedCardIds.includes(draggingId)}
+            />,
+            document.body,
+          )
+        : null}
     </div>
     )
   }
