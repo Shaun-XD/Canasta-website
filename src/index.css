@@ -180,10 +180,13 @@ body {
   width: 2.15rem;
   min-width: 2.15rem;
   max-width: 2.15rem;
-  height: 1.45rem;
-  min-height: 1.45rem;
+  height: 46px;
+  min-height: 46px;
   padding: 0;
-  align-self: flex-end;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 0.32rem;
   font-size: 0.52rem;
   line-height: 1;
@@ -614,9 +617,10 @@ html.device-handheld .play-dock-discard.action-btn-stack {
   width: 2.15rem;
   min-width: 2.15rem;
   max-width: 2.15rem;
-  height: 1.45rem;
-  min-height: 1.45rem;
+  height: 46px;
+  min-height: 46px;
   border-radius: 0.32rem;
+  align-self: center;
 }
 
 html.device-handheld .hand-rail-swipe {
@@ -809,8 +813,9 @@ html.device-handheld .discard-fan {
     width: 2.15rem;
     min-width: 2.15rem;
     max-width: 2.15rem;
-    height: 1.45rem;
-    min-height: 1.45rem;
+    height: 46px;
+    min-height: 46px;
+    align-self: center;
   }
 
   html.device-handheld .play-dock-help {
