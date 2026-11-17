@@ -839,3 +839,129 @@ html.device-handheld .discard-fan {
     margin-bottom: 0.2rem;
   }
 }
+
+/* Unfolded phones and tablets: reserve readable controls before the meld area
+   takes the remaining space. Sizes track CSS viewport dimensions, not a model. */
+html.device-handheld .table-roomy-touch {
+  --table-touch-size: clamp(48px, 6.5vmin, 64px);
+  --table-action-width: clamp(72px, 10vw, 104px);
+}
+
+html.device-handheld .table-roomy-touch .table-topbar {
+  min-height: 58px;
+  padding: 6px 12px;
+}
+
+html.device-handheld .table-roomy-touch .table-menu-btn {
+  width: var(--table-touch-size);
+  height: var(--table-touch-size);
+  padding: 12px;
+  gap: 5px;
+}
+
+html.device-handheld .table-roomy-touch .table-menu-panel button {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+html.device-handheld .table-roomy-touch .melds-grid > .felt-panel > div:first-child > span:first-child {
+  font-size: clamp(14px, 1.8vw, 18px);
+}
+
+html.device-handheld .table-roomy-touch .play-dock {
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-banner > div,
+html.device-handheld .table-roomy-touch .play-dock-banner > div > span {
+  font-size: 13px;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-items: center;
+  gap: 12px;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-local {
+  position: static;
+  grid-area: 1 / 1 / 2 / 2;
+  justify-self: start;
+  max-width: 100%;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-local-name {
+  display: none;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-hand {
+  grid-area: 1 / 2 / 2 / 7;
+  padding-left: 0;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-piles {
+  grid-area: 2 / 1 / 3 / 4;
+  gap: 8px;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-tools {
+  grid-area: 2 / 4 / 3 / 7;
+  justify-self: end;
+  gap: 12px;
+}
+
+html.device-handheld .table-roomy-touch .action-stack {
+  gap: 8px;
+}
+
+html.device-handheld .table-roomy-touch .action-btn-stack {
+  flex: 0 0 auto;
+  width: var(--table-action-width);
+  min-width: var(--table-action-width);
+  max-width: none;
+  min-height: var(--table-touch-size);
+  height: var(--table-touch-size);
+  padding: 8px;
+  font-size: clamp(14px, 1.8vw, 18px);
+  border-radius: 10px;
+}
+
+html.device-handheld .table-roomy-touch .hand-sort-buttons {
+  gap: 8px;
+}
+
+html.device-handheld .table-roomy-touch .hand-sort-buttons button {
+  width: var(--table-touch-size);
+  height: var(--table-touch-size);
+}
+
+html.device-handheld .table-roomy-touch .stock-btn {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-help {
+  display: flex;
+  /* Keep the hand still when the Cancel button appears during Top Touch. */
+  min-height: 48px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+html.device-handheld .table-roomy-touch .play-dock-instruction {
+  flex: 1 1 18rem;
+  font-size: clamp(13px, 1.7vw, 16px);
+  line-height: 1.4;
+  text-align: center;
+  color: rgb(254 240 138);
+}
+
+html.device-handheld .table-roomy-touch .play-dock-help button {
+  min-height: 48px !important;
+  min-width: 96px;
+  font-size: 14px !important;
+}

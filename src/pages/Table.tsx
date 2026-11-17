@@ -22,7 +22,7 @@ import { useIsHandheld } from '../lib/device'
 import { evaluateShowEligibility, unmetShowConditions } from '../engine/showEligibility'
 import type { CardModel, Player, Team } from '../types/game'
 import { meldCards } from '../types/game'
-import { planHandFan, scaledHandCardWidth } from './tableLayout'
+import { handheldTableSizing, planHandFan, scaledHandCardWidth } from './tableLayout'
 import { canOfferSuddenDeathEnd } from '../engine/turnEngine'
 
 const HAND_CARD_WIDTH = 78
@@ -135,6 +135,11 @@ export function Table() {
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined' ? 800 : window.innerHeight,
   )
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === 'undefined' ? 1200 : window.innerWidth,
+  )
+  const handheldSizing = handheldTableSizing(viewportWidth, viewportHeight)
+  const roomyHandheld = handheld && handheldSizing.roomy
   const [menuOpen, setMenuOpen] = useState(false)
   const [hoveredHandId, setHoveredHandId] = useState<string | null>(null)
   /** Dismiss the score overlay to inspect the final table, then return. */
@@ -195,12 +200,17 @@ export function Table() {
       const raw = parent?.clientWidth ?? el.clientWidth
       setHandRailWidth(handheld ? Math.max(0, raw - 16) : Math.max(HAND_REF_WIDTH, raw - 16))
       setViewportHeight(window.innerHeight)
+      setViewportWidth(window.innerWidth)
     }
     measure()
     const ro = new ResizeObserver(measure)
     if (el.parentElement) ro.observe(el.parentElement)
     ro.observe(el)
-    return () => ro.disconnect()
+    window.addEventListener('resize', measure)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
   }, [handheld, game?.roomId])
 
   // Classic table seats: teammate North, opponents West/East (clockwise from local).
@@ -291,7 +301,7 @@ export function Table() {
     handlePointerEnter: handleCardPointerEnter,
     applyOrder: applyHandOrder,
     consumeClickIfDragged,
-  } = useHandReorder(rawLocalHand.map((c) => c.id), { handheld })
+  } = useHandReorder(rawLocalHand.map((c) => c.id), { handheld, preserveTapTarget: roomyHandheld })
   const [handSortMode, setHandSortMode] = useState<HandSortMode | null>('suit')
 
   useEffect(() => {
@@ -415,15 +425,19 @@ export function Table() {
   const handPeek = handFan.peek
   const handOverlap = handCardWidth - handPeek
   const handFanWidth = handFan.fanWidth
-  // Stock and discard-pile faces share one size. On the phone dock they match
-  // the 46px action buttons (width = height × 100/140).
+  // Foldables/tablets use their available space instead of the short phone dock.
   const hubCardWidth = handheld
-    ? Math.round(46 * (100 / 140))
+    ? handheldSizing.pileCardWidth
     : Math.round(
         Math.min(DISCARD_CARD_WIDTH, Math.max(viewportHeight <= 540 ? 30 : 48, handCardWidth * 0.82)),
       )
-  const meldCardWidthCap = Math.max(32, Math.round(handCardWidth * 0.86))
-  const discardFanMax = discardFanWidth(hubCardWidth, DISCARD_VISIBLE_CARDS)
+  const meldCardWidthCap = roomyHandheld
+    ? handheldSizing.meldCardWidth!
+    : Math.max(32, Math.round(handCardWidth * 0.86))
+  const discardFanMax = Math.min(
+    discardFanWidth(hubCardWidth, DISCARD_VISIBLE_CARDS),
+    roomyHandheld ? (handheldSizing.discardMaxWidth ?? Infinity) : Infinity,
+  )
 
   const desktopHandPeek = (() => {
     if (handCount <= 1) return HAND_CARD_WIDTH
@@ -440,7 +454,7 @@ export function Table() {
 
   if (handheld) {
   return (
-    <div className={`felt-bg table-shell table-shell-handheld relative flex flex-col text-white ${menuOpen ? 'table-menu-open' : ''}`}>
+    <div className={`felt-bg table-shell table-shell-handheld relative flex flex-col text-white ${roomyHandheld ? 'table-roomy-touch' : ''} ${menuOpen ? 'table-menu-open' : ''}`}>
       <div className="rotate-landscape-gate" role="dialog" aria-label="Rotate to landscape">
         <div className="rotate-landscape-card">
           <p className="text-lg font-bold text-white">Rotate your phone</p>
@@ -600,6 +614,8 @@ export function Table() {
                       canModify={isLocalTurn && isLocalSide}
                       onMoveWild={moveWildInMeld}
                       maxCardWidth={meldCardWidthCap}
+                      minCardWidth={roomyHandheld ? 56 : undefined}
+                      scrollable={roomyHandheld}
                       compact
                     />
                   </div>
@@ -724,8 +740,8 @@ export function Table() {
                           isReorderingRef.current = true
                           handleCardPointerDown(card.id, e)
                         }}
-                        onPointerEnter={() => {
-                          if (draggingId) return
+                        onPointerEnter={(e) => {
+                          if (draggingId || (roomyHandheld && (e.pointerType === 'touch' || !window.matchMedia('(hover: hover)').matches))) return
                           setHoveredHandId(card.id)
                         }}
                         className="relative shrink-0 touch-none"
@@ -799,6 +815,17 @@ export function Table() {
           </div>
 
           <div className="play-dock-help">
+            {roomyHandheld && (isDrawPhase || isActionPhase) && (
+              <p className="play-dock-instruction" role="status">
+                {topTouchInProgress
+                  ? 'Select matching hand cards or a meld, then tap Meld Top.'
+                  : isActionPhase
+                    ? 'Select cards to meld, or select one card and tap Discard to end your turn.'
+                    : stockDepleted
+                      ? 'Tap the top discard to use it in a meld, or play from your hand.'
+                      : 'Tap the top discard to use it in a meld, or draw from the blue stock pile.'}
+              </p>
+            )}
             {topTouchInProgress && (
               <button type="button" onClick={cancelTopTouch} className="action-btn action-btn-ghost mx-auto !min-h-8 !text-[11px]">
                 Cancel

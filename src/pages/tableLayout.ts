@@ -20,6 +20,19 @@ const HAND_SWIPE_PEEK = 14
 export const HAND_MAX_FAN_WIDTH =
   HAND_CARD_WIDTH_MAX + (HAND_BASE_COUNT - 1) * Math.round(HAND_COMFORT_PEEK * 1.5)
 
+/** Size from the browser's usable CSS viewport, including fold/unfold changes. */
+export function handheldTableSizing(width: number, height: number) {
+  const roomy = width >= 600 && height > 540
+  const shortSide = Math.min(width, height)
+  return {
+    roomy,
+    pileCardWidth: roomy ? Math.round(Math.max(56, Math.min(80, shortSide * 0.08))) : 33,
+    meldCardWidth: roomy ? Math.round(Math.max(56, Math.min(96, shortSide * 0.105))) : null,
+    // Keep the pile inside its half of the dock; older cards remain swipeable.
+    discardMaxWidth: roomy ? Math.round(width * 0.17) : null,
+  }
+}
+
 export function scaledHandCardWidth(railWidth: number, viewportHeight = 900): number {
   const heightCap =
     viewportHeight <= 540

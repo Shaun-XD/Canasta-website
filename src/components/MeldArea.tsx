@@ -40,7 +40,7 @@ const MELD_CARD_MAX = 75
 /** Peek as a fraction of card height — tight like the reference (index strip only). */
 const MELD_PEEK_RATIO = 0.38
 const MELD_GAP = 7
-/** Renders a team's melds as compact vertical columns that always fit the panel width (no scroll). */
+/** Vertical meld columns; roomy touch layouts scroll to preserve readable cards. */
 export function MeldArea({
   team,
   align = 'left',
@@ -51,6 +51,8 @@ export function MeldArea({
   onMoveWild,
   maxCardWidth = MELD_CARD_MAX,
   compact = false,
+  minCardWidth = compact ? 28 : 45,
+  scrollable = false,
 }: {
   team: Team
   align?: 'left' | 'right' | 'center'
@@ -59,10 +61,13 @@ export function MeldArea({
   onSelectMeld?: (meldId: string) => void
   canModify?: boolean
   onMoveWild?: (meldId: string) => void
-  /** Cap so table melds stay slightly smaller than the local hand cards. */
+  /** Maximum card face width for the current table layout. */
   maxCardWidth?: number
   /** Smaller cards and short labels on the handheld table. */
   compact?: boolean
+  /** Readable touch cards can scroll instead of shrinking to fit many melds. */
+  minCardWidth?: number
+  scrollable?: boolean
 }) {
   const shellRef = useRef<HTMLDivElement>(null)
   const [cardWidth, setCardWidth] = useState(54)
@@ -74,14 +79,14 @@ export function MeldArea({
       const n = Math.max(1, team.melds.length)
       const available = el.clientWidth - 8 // inner padding
       const perCol = (available - MELD_GAP * (n - 1)) / n
-      const cap = Math.min(MELD_CARD_MAX, maxCardWidth)
-      setCardWidth(Math.max(compact ? 28 : 45, Math.min(cap, Math.floor(perCol))))
+      const cap = scrollable ? maxCardWidth : Math.min(MELD_CARD_MAX, maxCardWidth)
+      setCardWidth(Math.max(minCardWidth, Math.min(cap, Math.floor(perCol))))
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [team.melds.length, maxCardWidth, compact])
+  }, [team.melds.length, maxCardWidth, minCardWidth, scrollable])
 
   const cardHeight = Math.round(cardWidth * 1.4)
   const peekPx = Math.max(16, Math.round(cardHeight * MELD_PEEK_RATIO))
@@ -90,10 +95,14 @@ export function MeldArea({
   return (
     <div
       ref={shellRef}
-      className={`flex h-full min-h-0 w-full flex-nowrap items-start overflow-x-clip overflow-y-visible rounded-lg bg-black/10 px-1 pb-1 pt-3.5 sm:px-1.5 sm:pb-1.5 sm:pt-4 ${
-        align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
+      className={`meld-area flex h-full min-h-0 w-full flex-nowrap items-start rounded-lg bg-black/10 px-1 pb-1 pt-3.5 sm:px-1.5 sm:pb-1.5 sm:pt-4 ${scrollable ? 'overflow-auto' : 'overflow-x-clip overflow-y-visible'} ${
+        scrollable ? '' : align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
       }`}
-      style={{ gap: MELD_GAP, minHeight: team.melds.length === 0 ? 64 : undefined }}
+      style={{
+        gap: MELD_GAP,
+        minHeight: team.melds.length === 0 ? 64 : undefined,
+        justifyContent: scrollable ? (align === 'right' ? 'safe flex-end' : 'flex-start') : undefined,
+      }}
     >
       {team.melds.length === 0 && (
         <span className="self-center px-2 py-3 text-center text-[12px] font-medium text-white/35">No melds yet</span>
@@ -110,6 +119,7 @@ export function MeldArea({
           canModify={canModify}
           onMoveWild={onMoveWild}
           compact={compact}
+          scrollable={scrollable}
         />
       ))}
     </div>
@@ -126,6 +136,7 @@ function MeldColumn({
   canModify,
   onMoveWild,
   compact,
+  scrollable,
 }: {
   meld: Meld
   cardWidth: number
@@ -136,6 +147,7 @@ function MeldColumn({
   canModify: boolean
   onMoveWild?: (meldId: string) => void
   compact: boolean
+  scrollable: boolean
 }) {
   // Sequences display high→low; bottom of the column is always the lowest-rank card.
   const cards = meld.type === 'sequence' ? [...meldCards(meld)].reverse() : meldCards(meld)
@@ -157,7 +169,7 @@ function MeldColumn({
   const classColor = CLASSIFICATION_COLOR_COMPACT[meld.classification]
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col items-center gap-0.5" style={{ maxWidth: colMaxW }}>
+    <div className="relative flex min-w-0 flex-1 flex-col items-center gap-0.5" style={{ maxWidth: colMaxW, flex: scrollable ? `0 0 ${colMaxW}px` : undefined }}>
       <button
         type="button"
         onClick={onSelect}

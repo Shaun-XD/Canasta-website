@@ -48,10 +48,12 @@ export function peekBandMidpoints(slots: { left: number; width: number }[]): num
   })
 }
 
-export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean }) {
+export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean; preserveTapTarget?: boolean }) {
   const handheld = opts?.handheld === true
   const handheldRef = useRef(handheld)
   handheldRef.current = handheld
+  const preserveTapTargetRef = useRef(false)
+  preserveTapTargetRef.current = handheld && opts?.preserveTapTarget === true
 
   const [order, setOrder] = useState<string[]>(cardIds)
   const orderRef = useRef(order)
@@ -138,6 +140,9 @@ export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean })
     draggingIdRef.current = id
     setDraggingId(id)
     movedRef.current = false
+    // A drag can end outside a card without producing a click. Its suppression
+    // must not carry over to the next genuine tap.
+    if (preserveTapTargetRef.current) suppressClickRef.current = false
     if (handheldRef.current) {
       beginHandReorder()
       freezeCardFlip(id)
@@ -157,7 +162,12 @@ export function useHandReorder(cardIds: string[], opts?: { handheld?: boolean })
       dragPointRef.current = null
       setDragPoint(null)
     }
-    if (handheldRef.current && el instanceof HTMLElement && typeof el.setPointerCapture === 'function') {
+    // Keep the browser's implicit touch capture on the actual card button.
+    // Capturing on this outer wrapper retargets the eventual click away from
+    // the button, swallowing taps (including hand selections for Top Touch).
+    // The window listeners below continue tracking a drag outside the card.
+    // Opt in for the roomy touch layout; retain other layouts' capture behavior.
+    if (handheldRef.current && !preserveTapTargetRef.current && el instanceof HTMLElement && typeof el.setPointerCapture === 'function') {
       try {
         el.setPointerCapture(event.pointerId)
       } catch {

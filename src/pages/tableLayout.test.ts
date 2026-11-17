@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planHandFan, scaledHandCardWidth } from './tableLayout'
+import { handheldTableSizing, planHandFan, scaledHandCardWidth } from './tableLayout'
 
 /** Typical CSS widths we must fit without forcing a laptop-sized hand. */
 const VIEWPORTS = {
@@ -10,6 +10,30 @@ const VIEWPORTS = {
   foldInner: 690,
   landscapeShort: 844,
 } as const
+
+describe('unfolded handheld controls', () => {
+  it.each([[600, 620], [690, 780], [825, 830], [1024, 768]])(
+    'keeps piles and melds readable at %i × %i without consuming the control row',
+    (width, height) => {
+      const sizing = handheldTableSizing(width, height)
+      expect(sizing.roomy).toBe(true)
+      expect(sizing.pileCardWidth).toBeGreaterThanOrEqual(56)
+      expect(sizing.meldCardWidth).toBeGreaterThanOrEqual(56)
+      expect(sizing.discardMaxWidth).toBeLessThan(width / 4)
+    },
+  )
+
+  it('changes layout when unfolding or rotating, preserving the short phone dock', () => {
+    expect(handheldTableSizing(599, 830).roomy).toBe(false)
+    expect(handheldTableSizing(825, 540).roomy).toBe(false)
+    expect(handheldTableSizing(600, 541).roomy).toBe(true)
+    expect(handheldTableSizing(390, 844).roomy).toBe(false)
+    expect(handheldTableSizing(825, 830).roomy).toBe(true)
+    expect(handheldTableSizing(830, 825).roomy).toBe(true)
+    expect(handheldTableSizing(844, 390).roomy).toBe(false)
+    expect(handheldTableSizing(844, 390).pileCardWidth).toBe(33)
+  })
+})
 
 describe('phone-fit hand fan (handheld layout only)', () => {
   it('scales card width down on narrow rails and caps at 78 on wide ones', () => {
