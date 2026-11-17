@@ -17,7 +17,7 @@ export function Landing() {
   const [name, setName] = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [mode, setMode] = useState<'create' | 'join'>('create')
-  const [playMode, setPlayMode] = useState<'online' | 'solo'>('online')
+  const [playMode, setPlayMode] = useState<'online' | 'solo'>('solo')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [targetScore, setTargetScore] = useState(String(DEFAULT_TARGET_SCORE))
@@ -139,21 +139,21 @@ export function Landing() {
         <div className="mb-4 flex rounded-lg bg-white/5 p-1">
           <button
             type="button"
-            onClick={() => setPlayMode('online')}
-            className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
-              playMode === 'online' ? 'bg-emerald-400 text-emerald-950' : 'text-white/70 hover:text-white'
-            }`}
-          >
-            Online
-          </button>
-          <button
-            type="button"
             onClick={() => setPlayMode('solo')}
             className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
               playMode === 'solo' ? 'bg-emerald-400 text-emerald-950' : 'text-white/70 hover:text-white'
             }`}
           >
             Solo (bots)
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlayMode('online')}
+            className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition ${
+              playMode === 'online' ? 'bg-emerald-400 text-emerald-950' : 'text-white/70 hover:text-white'
+            }`}
+          >
+            Online
           </button>
         </div>
 
