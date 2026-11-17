@@ -172,7 +172,7 @@ export interface TurnState {
   activePlayerId: PlayerId
   phase: TurnPhase
   turnNumber: number
-  /** True once the player has drawn from stock or taken the discard pile this turn. */
+  /** True once the player has drawn from stock, taken the discard pile, or skipped draw because the stock is empty. */
   hasDrawnThisTurn: boolean
   /** Epoch ms timestamp of when this turn started, used to drive the per-player turn timer countdown. */
   startedAt: number
@@ -316,6 +316,12 @@ export interface GameState {
    * round end. Illegal empty after Pozzetto without Show eligibility.
    */
   emptyHandFoulByTeam: Record<TeamId, number>
+  /**
+   * Turn number when the stock first reached 0 this round. Null while cards
+   * remain. After every seat has taken a turn past this mark, players may
+   * end the round (sudden death).
+   */
+  stockDepletedAtTurnNumber: number | null
 }
 
 export const SUITS: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades']

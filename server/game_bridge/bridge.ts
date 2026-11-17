@@ -10,7 +10,7 @@
 import * as readline from 'node:readline'
 import { buildShuffledDeck, dealHands, sortHand } from '../../src/lib/deck.ts'
 import { initialPozzettoState, shouldClaimPozzettoOnDiscard, shouldClaimPozzettoOnMeldEmpty } from '../../src/engine/pozzetto.ts'
-import { performDrawFromStock, performDiscard, attemptMeldAction, getNextPlayerId } from '../../src/engine/turnEngine.ts'
+import { performDrawFromStock, performDiscard, attemptMeldAction, getNextPlayerId, markStockDepletion, canOfferSuddenDeathEnd, canSkipDrawBecauseStockEmpty } from '../../src/engine/turnEngine.ts'
 import { moveWildInMeld } from '../../src/engine/meldValidation.ts'
 import { evaluateShowEligibility } from '../../src/engine/showEligibility.ts'
 import { EMPTY_HAND_FOUL_PENALTY, isIllegalEmptyHand } from '../../src/engine/emptyHandFoul.ts'
@@ -144,6 +144,7 @@ function dealNewRound(room: RoomState, round = 1): GameState {
     gameOverTeamId: null,
     lastAcquired: null,
     lastPlay: null,
+    stockDepletedAtTurnNumber: null,
   }
 }
 
@@ -542,16 +543,16 @@ function draw(params: { roomId: string; playerId: string }): { room: RoomState; 
   if (game.turn.phase !== 'draw') throw new Error('Already drew this turn.')
   if (game.stock.length === 0) throw new Error('Stock is empty.')
   const result = performDrawFromStock(game.stock, game.hands[params.playerId] ?? [])
-  session.game = {
+  session.game = markStockDepletion({
     ...game,
     stock: result.stock,
     hands: { ...game.hands, [params.playerId]: sortHand(result.hand) },
-    turn: { ...game.turn, phase: 'action', hasDrawnThisTurn: true },
+    turn: { ...game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
     lastAcquired: result.drawnCard
       ? { playerId: params.playerId, cardIds: [result.drawnCard.id], at: Date.now() }
       : game.lastAcquired,
     lastPlay: cardPlay(params.playerId, 'draw-stock', { count: result.drawnCard ? 1 : 0 }),
-  }
+  })
   return { room: session.room, game: session.game }
 }
 
@@ -578,7 +579,13 @@ function attempt_meld(params: {
   const selectedDiscardIds = params.selectedDiscardIds ?? []
   const isTopTouch = selectedDiscardIds.length > 0
   if (isTopTouch && game.turn.phase !== 'draw') throw new Error('Top Touch only during draw phase.')
-  if (!isTopTouch && game.turn.phase !== 'action') throw new Error('Meld only during action phase.')
+  if (!isTopTouch && game.turn.phase !== 'action') {
+    if (!canSkipDrawBecauseStockEmpty(game)) throw new Error('Meld only during action phase.')
+    game = markStockDepletion({
+      ...game,
+      turn: { ...game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
+    })
+  }
 
   const result = attemptMeldAction({
     hand: game.hands[params.playerId] ?? [],
@@ -650,7 +657,7 @@ function attempt_meld(params: {
     ...game,
     hands: { ...game.hands, [params.playerId]: sortHand(hand) },
     pozzettoStacks,
-    turn: { ...game.turn, phase: 'action', hasDrawnThisTurn: true },
+    turn: { ...game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
     pendingSlide: null,
     lastPlay: cardPlay(params.playerId, isTopTouch ? 'top-touch' : 'meld', {
       cardIds: newMeldIds,
@@ -697,7 +704,13 @@ function discard(params: { roomId: string; playerId: string; cardId: string }): 
   let room = session.room
   let game = session.game
   if (game.turn.activePlayerId !== params.playerId) throw new Error('Not your turn.')
-  if (!game.turn.hasDrawnThisTurn) throw new Error('Draw before discarding.')
+  if (!game.turn.hasDrawnThisTurn) {
+    if (!canSkipDrawBecauseStockEmpty(game)) throw new Error('Draw before discarding.')
+    game = markStockDepletion({
+      ...game,
+      turn: { ...game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
+    })
+  }
 
   const team = findTeamForPlayer(room, params.playerId)
   if (!team) throw new Error('Team not found.')
@@ -743,7 +756,7 @@ function discard(params: { roomId: string; playerId: string; cardId: string }): 
     }
   }
 
-  game = { ...game, turn: advanceTurn(game, room, params.playerId), pendingSlide: null }
+  game = { ...markStockDepletion(game), turn: advanceTurn(game, room, params.playerId), pendingSlide: null }
   session.room = room
   session.game = game
   applyBots(session)
@@ -793,6 +806,9 @@ function force_sudden_death(params: { roomId: string; playerId: string }): {
   const session = requireSession(params.roomId)
   if (!session.game) throw new Error('Game not started.')
   if (session.game.stock.length > 0) throw new Error('Stock is not empty.')
+  if (!canOfferSuddenDeathEnd(session.game, session.room.players.length)) {
+    throw new Error('Everyone must take a turn with the stock empty before the round can be ended.')
+  }
   const scored = endRoundWithScore(session.room, session.game, 'sudden-death', null)
   session.room = scored.room
   session.game = scored.game

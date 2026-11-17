@@ -1,4 +1,4 @@
-import type { CardModel, Meld, PlayerId, Team, TeamId } from '../types/game'
+import type { CardModel, Meld, PlayerId, Team, TeamId, TurnPhase } from '../types/game'
 import { appendToMeld, buildSequence, buildSet, type AppendContext } from './meldValidation'
 
 export const TOP_TOUCH_FAILURE_PENALTY = 150
@@ -371,4 +371,41 @@ export function performDiscard(
 
 export function isStockDepleted(stock: CardModel[]): boolean {
   return stock.length === 0
+}
+
+/**
+ * Stamp the turn when the stock first hits 0. Later empty-stock turns keep
+ * the original mark so a full circle can be measured.
+ */
+export function markStockDepletion<T extends { stock: CardModel[]; turn: { turnNumber: number }; stockDepletedAtTurnNumber?: number | null }>(
+  game: T,
+): T {
+  if (game.stock.length > 0) {
+    if (game.stockDepletedAtTurnNumber == null) return game
+    return { ...game, stockDepletedAtTurnNumber: null }
+  }
+  if (game.stockDepletedAtTurnNumber != null) return game
+  return { ...game, stockDepletedAtTurnNumber: game.turn.turnNumber }
+}
+
+/** True after every seat has completed a turn with the stock already empty. */
+export function canOfferSuddenDeathEnd(
+  game: {
+    stock: CardModel[]
+    turn: { turnNumber: number }
+    stockDepletedAtTurnNumber?: number | null
+  },
+  playerCount: number,
+): boolean {
+  if (game.stock.length > 0) return false
+  const since = game.stockDepletedAtTurnNumber
+  if (since == null || playerCount < 1) return false
+  return game.turn.turnNumber > since + playerCount
+}
+
+export function canSkipDrawBecauseStockEmpty(game: {
+  stock: CardModel[]
+  turn: { phase: TurnPhase }
+}): boolean {
+  return game.stock.length === 0 && game.turn.phase === 'draw'
 }

@@ -18,6 +18,7 @@ import {
   performDiscard,
   performDrawFromStock,
   topDiscardMustBePlayed,
+  markStockDepletion,
 } from './turnEngine'
 import { sortHand } from '../lib/deck'
 import type {
@@ -219,7 +220,7 @@ export function applyBotTurn(
             hands: { ...nextGame.hands, [playerId]: combinedHand },
             discardPile: { cards: [] },
             pozzettoStacks: claim.pozzettoStacks,
-            turn: { ...nextGame.turn, phase: 'action', hasDrawnThisTurn: true },
+            turn: { ...nextGame.turn, phase: 'action' as const, hasDrawnThisTurn: true },
             lastAcquired: {
               playerId,
               cardIds: [...result.usedDiscardCards.map((c) => c.id), ...restOfPile.map((c) => c.id)],
@@ -238,18 +239,21 @@ export function applyBotTurn(
 
     if (!drew && nextGame.stock.length > 0) {
       const drawResult = performDrawFromStock(nextGame.stock, nextGame.hands[playerId] ?? [])
-      nextGame = {
+      nextGame = markStockDepletion({
         ...nextGame,
         stock: drawResult.stock,
         hands: { ...nextGame.hands, [playerId]: sortHand(drawResult.hand) },
-        turn: { ...nextGame.turn, phase: 'action', hasDrawnThisTurn: true },
+        turn: { ...nextGame.turn, phase: 'action' as const, hasDrawnThisTurn: true },
         lastAcquired: drawResult.drawnCard
           ? { playerId, cardIds: [drawResult.drawnCard.id], at: Date.now() }
           : nextGame.lastAcquired,
         lastPlay: cardPlay(playerId, 'draw-stock', { count: drawResult.drawnCard ? 1 : 0 }),
-      }
+      })
     } else if (!drew) {
-      nextGame = { ...nextGame, turn: { ...nextGame.turn, phase: 'action', hasDrawnThisTurn: true } }
+      nextGame = markStockDepletion({
+        ...nextGame,
+        turn: { ...nextGame.turn, phase: 'action' as const, hasDrawnThisTurn: true },
+      })
     }
   }
 
@@ -395,7 +399,10 @@ export function applyBotTurn(
           },
         }
       }
-      nextGame = { ...nextGame, turn: advanceTurn(nextGame, nextRoom, playerId) }
+      nextGame = {
+        ...markStockDepletion(nextGame),
+        turn: advanceTurn(nextGame, nextRoom, playerId),
+      }
       return { room: nextRoom, game: nextGame }
     }
   }
@@ -404,7 +411,10 @@ export function applyBotTurn(
     const autoShow = tryAutoShow(nextRoom, nextGame, team, playerId)
     if (autoShow.ended) return autoShow
   }
-  nextGame = { ...nextGame, turn: advanceTurn(nextGame, nextRoom, playerId) }
+  nextGame = {
+    ...markStockDepletion(nextGame),
+    turn: advanceTurn(nextGame, nextRoom, playerId),
+  }
   return { room: nextRoom, game: nextGame }
 }
 

@@ -20,6 +20,7 @@ export function TurnBanner({
   remainingSeconds,
   isPaused = false,
   compact = false,
+  stockEmpty = false,
 }: {
   playerName: string
   phase: TurnPhase
@@ -30,6 +31,8 @@ export function TurnBanner({
   isPaused?: boolean
   /** Slimmer bar used in the mockup center row (Paused lives on the action stack). */
   compact?: boolean
+  /** Stock is empty — draw-phase copy should offer Top Touch or play from hand. */
+  stockEmpty?: boolean
 }) {
   // When paused, the action column shows the Paused chip — keep the banner quiet.
   if (compact && isPaused) {
@@ -40,6 +43,15 @@ export function TurnBanner({
       </div>
     )
   }
+
+  const phaseLabel =
+    phase === 'draw' && stockEmpty
+      ? compact
+        ? 'Top Touch or play hand'
+        : 'Top Touch the discard, or meld/discard from your hand'
+      : compact
+        ? PHASE_SHORT[phase]
+        : PHASE_LABEL[phase]
 
   return (
     <div
@@ -70,7 +82,7 @@ export function TurnBanner({
           <span className="font-bold">{isLocalTurn ? 'Your turn' : `${playerName}'s turn`}</span>
           <span className={`opacity-70 ${compact ? 'inline' : 'hidden sm:inline'}`}>·</span>
           <span className={`text-center leading-snug opacity-80 ${compact ? 'text-[10px]' : 'text-[12px] sm:text-sm'}`}>
-            {compact ? PHASE_SHORT[phase] : PHASE_LABEL[phase]}
+            {phaseLabel}
           </span>
         </>
       )}

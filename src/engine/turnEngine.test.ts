@@ -6,6 +6,8 @@ import {
   performDrawFromStock,
   performTopTouch,
   topDiscardMustBePlayed,
+  markStockDepletion,
+  canOfferSuddenDeathEnd,
 } from './turnEngine'
 import { buildSequence, buildSet } from './meldValidation'
 import { initialPozzettoState } from './pozzetto'
@@ -524,5 +526,39 @@ describe('performDiscard', () => {
   it('returns null for a card not in hand', () => {
     const result = performDiscard([], 'missing', [])
     expect(result).toBeNull()
+  })
+})
+
+describe('empty-stock sudden death window', () => {
+  it('marks depletion on the turn the stock first hits 0 and keeps that mark', () => {
+    const empty = markStockDepletion({
+      stock: [],
+      turn: { turnNumber: 10 },
+      stockDepletedAtTurnNumber: null as number | null,
+    })
+    expect(empty.stockDepletedAtTurnNumber).toBe(10)
+    const later = markStockDepletion({ ...empty, turn: { turnNumber: 12 } })
+    expect(later.stockDepletedAtTurnNumber).toBe(10)
+  })
+
+  it('clears the mark if the stock is restocked', () => {
+    const restocked = markStockDepletion({
+      stock: [c('3', 'hearts')],
+      turn: { turnNumber: 11 },
+      stockDepletedAtTurnNumber: 10,
+    })
+    expect(restocked.stockDepletedAtTurnNumber).toBeNull()
+  })
+
+  it('offers End Round only after every seat has had a turn with an empty stock', () => {
+    const game = {
+      stock: [] as ReturnType<typeof c>[],
+      turn: { turnNumber: 10 },
+      stockDepletedAtTurnNumber: 10,
+    }
+    expect(canOfferSuddenDeathEnd(game, 4)).toBe(false)
+    expect(canOfferSuddenDeathEnd({ ...game, turn: { turnNumber: 14 } }, 4)).toBe(false)
+    expect(canOfferSuddenDeathEnd({ ...game, turn: { turnNumber: 15 } }, 4)).toBe(true)
+    expect(canOfferSuddenDeathEnd({ ...game, turn: { turnNumber: 13 } }, 2)).toBe(true)
   })
 })

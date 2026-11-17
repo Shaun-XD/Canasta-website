@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { useGameStore } from './gameStore'
 import { c } from '../engine/testHelpers'
 import { buildSequence } from '../engine/meldValidation'
+import { canOfferSuddenDeathEnd } from '../engine/turnEngine'
 import type { CardModel, Meld } from '../types/game'
 
 /**
@@ -601,5 +602,80 @@ describe('Top Touch meld from the discard pile', () => {
     expect(after.lastActionError).toBeNull()
     const team = after.room!.teams.find((t) => t.playerIds.includes(localId))!
     expect(team.melds[0].slots.map((s) => s.slotRank)).toEqual(['5', '6', '7', '8', '9'])
+  })
+})
+
+describe('empty stock — play from hand, then End Round after a full circle', () => {
+  beforeEach(() => {
+    useGameStore.setState({
+      room: null,
+      game: null,
+      localPlayerId: null,
+      playMode: 'solo',
+      selectedCardIds: [],
+      selectedMeldId: null,
+      topTouchInProgress: false,
+      selectedDiscardIds: [],
+      lastActionError: null,
+    })
+  })
+
+  function startAndEmptyStock() {
+    const { actions } = useGameStore.getState()
+    actions.createRoom('Tester')
+    actions.toggleReady()
+    actions.startGame()
+    const { game, localPlayerId } = useGameStore.getState()
+    if (!game || !localPlayerId) throw new Error('expected a started game')
+    const discardCard = game.discardPile.cards[0] ?? c('3', 'hearts')
+    const hand = game.hands[localPlayerId]
+    useGameStore.setState({
+      game: {
+        ...game,
+        stock: [],
+        stockDepletedAtTurnNumber: game.turn.turnNumber,
+        discardPile: { cards: [discardCard] },
+        turn: { ...game.turn, phase: 'draw', hasDrawnThisTurn: false },
+      },
+      selectedCardIds: [hand[0].id],
+    })
+    return useGameStore.getState()
+  }
+
+  it('lets the player discard from hand without drawing when the stock is empty', () => {
+    const before = startAndEmptyStock()
+    const localId = before.localPlayerId!
+    const discardedId = before.selectedCardIds[0]
+    const handBefore = before.game!.hands[localId].length
+
+    before.actions.discardSelected()
+
+    const after = useGameStore.getState()
+    expect(after.game!.hands[localId].some((card) => card.id === discardedId)).toBe(false)
+    expect(after.game!.hands[localId].length).toBe(handBefore - 1)
+    expect(after.game!.discardPile.cards.some((card) => card.id === discardedId)).toBe(true)
+    expect(after.game!.turn.activePlayerId).not.toBe(localId)
+  })
+
+  it('does not show End Round until every player has taken a turn with the stock empty', () => {
+    const { actions, game, room } = startAndEmptyStock()
+    expect(canOfferSuddenDeathEnd(game!, room!.players.length)).toBe(false)
+    actions.forceSuddenDeathEndRound()
+    expect(useGameStore.getState().room?.status).toBe('in-progress')
+    expect(useGameStore.getState().lastActionError).toMatch(/Everyone must take a turn/)
+  })
+
+  it('allows End Round after a full circle of empty-stock turns', () => {
+    const started = startAndEmptyStock()
+    const playerCount = started.room!.players.length
+    const since = started.game!.stockDepletedAtTurnNumber!
+    useGameStore.setState({
+      game: {
+        ...started.game!,
+        turn: { ...started.game!.turn, turnNumber: since + playerCount + 1 },
+      },
+    })
+    started.actions.forceSuddenDeathEndRound()
+    expect(useGameStore.getState().room?.status).toBe('round-end')
   })
 })

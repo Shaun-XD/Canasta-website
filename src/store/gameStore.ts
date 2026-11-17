@@ -25,6 +25,9 @@ import {
   performDiscard,
   performDrawFromStock,
   topDiscardMustBePlayed,
+  markStockDepletion,
+  canOfferSuddenDeathEnd,
+  canSkipDrawBecauseStockEmpty,
 } from '../engine/turnEngine'
 import { moveWildInMeld as moveWildInMeldEngine } from '../engine/meldValidation'
 import {
@@ -566,6 +569,7 @@ function dealNewRound(room: RoomState): GameState {
     lastAcquired: null,
     lastPlay: null,
     emptyHandFoulByTeam: { 'team-a': 0, 'team-b': 0 },
+    stockDepletedAtTurnNumber: null,
   }
 }
 
@@ -1122,13 +1126,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
       const { stock, hand, drawnCard } = performDrawFromStock(game.stock, game.hands[localPlayerId])
       set({
-        game: {
+        game: markStockDepletion({
           ...game,
           stock,
           hands: { ...game.hands, [localPlayerId]: sortHand(hand) },
-          turn: { ...game.turn, phase: 'action', hasDrawnThisTurn: true },
+          turn: { ...game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
           lastAcquired: drawnCard ? { playerId: localPlayerId, cardIds: [drawnCard.id], at: Date.now() } : game.lastAcquired,
-        },
+        }),
         lastActionError: null,
       })
     },
@@ -1282,7 +1286,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
             discardPile: { cards: [] },
             hands: { ...game.hands, [localPlayerId]: handAfter },
             pozzettoStacks: claim.pozzettoStacks,
-            turn: { ...game.turn, phase: 'action', hasDrawnThisTurn: true },
+            turn: { ...game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
             lastAcquired: {
               playerId: localPlayerId,
               cardIds: [...result.usedDiscardCards.map((c) => c.id), ...restOfPile.map((c) => c.id)],
@@ -1299,7 +1303,9 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         return
       }
 
-      if (game.turn.phase !== 'action') return
+      if (game.turn.phase !== 'action') {
+        if (!canSkipDrawBecauseStockEmpty(game)) return
+      }
 
       if (validSelected.length === 0 && !selectedMeldId) {
         set({ lastActionError: 'Select hand cards to meld.' })
@@ -1364,12 +1370,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         melds: meldsAfter,
         pozzetto: claim.pozzetto,
       }))
-      const nextGame: GameState = {
+      const nextGame: GameState = markStockDepletion({
         ...game,
         hands: { ...game.hands, [localPlayerId]: sortHand(claim.hand) },
         pozzettoStacks: claim.pozzettoStacks,
         pendingSlide: null,
-      }
+        turn: { ...game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
+      })
       const teamForShow = nextRoom.teams.find((t) => t.id === team.id)!
       const autoShow = tryAutoShowEnd(nextRoom, nextGame, teamForShow, localPlayerId)
       if (autoShow.ended) {
@@ -1482,10 +1489,12 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     },
 
     discardSelected: () => {
-      const { game, room, localPlayerId, selectedCardIds, playMode } = get()
+      const { game, room, localPlayerId, selectedCardIds, playMode, topTouchInProgress } = get()
       if (!game || !room || !localPlayerId) return
       if (game.turn.activePlayerId !== localPlayerId) return
-      if (game.turn.phase !== 'action' && game.turn.phase !== 'discard') return
+      if (topTouchInProgress) return
+      const mayActFromEmptyStock = canSkipDrawBecauseStockEmpty(game)
+      if (game.turn.phase !== 'action' && game.turn.phase !== 'discard' && !mayActFromEmptyStock) return
       const hand = game.hands[localPlayerId] ?? []
       const validSelected = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
       if (validSelected.length !== selectedCardIds.length) {
@@ -1544,7 +1553,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       set({
         room: nextRoom,
         game: {
-          ...nextGame,
+          ...markStockDepletion(nextGame),
           turn: advanceTurn(game, room, localPlayerId),
         },
         selectedCardIds: [],
@@ -1559,7 +1568,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     declareShow: () => {
       const { game, room, localPlayerId, selectedCardIds, playMode } = get()
       if (!game || !room || !localPlayerId) return
-      if (game.turn.activePlayerId !== localPlayerId || game.turn.phase !== 'action') return
+      if (game.turn.activePlayerId !== localPlayerId) return
+      if (game.turn.phase !== 'action' && !canSkipDrawBecauseStockEmpty(game)) return
       if (playMode === 'online') {
         const hand = game.hands[localPlayerId] ?? []
         const valid = selectedCardIds.filter((id) => hand.some((c) => c.id === id))
@@ -1622,6 +1632,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       const { room, game, playMode } = get()
       if (!room || !game) return
       if (game.stock.length !== 0) return
+      if (!canOfferSuddenDeathEnd(game, room.players.length)) {
+        set({
+          lastActionError:
+            'Everyone must take a turn with the stock empty before the round can be ended.',
+        })
+        return
+      }
       if (playMode === 'online') {
         set({ lastActionError: null })
         socketForceSuddenDeath()
@@ -1673,11 +1690,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       if (!cardIdToDiscard) {
         set({
           game: {
-            ...game,
-            stock,
-            hands: { ...game.hands, [localPlayerId]: sortHand(hand) },
+            ...markStockDepletion({
+              ...game,
+              stock,
+              hands: { ...game.hands, [localPlayerId]: sortHand(hand) },
+              lastAcquired,
+            }),
             turn: advanceTurn(game, room, localPlayerId),
-            lastAcquired,
           },
           selectedCardIds: [],
           selectedMeldId: null,
@@ -1725,7 +1744,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       set({
         room: nextRoom,
         game: {
-          ...nextGame,
+          ...markStockDepletion(nextGame),
           turn: advanceTurn(game, room, localPlayerId),
         },
         selectedCardIds: [],
@@ -2016,7 +2035,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
               hands: { ...latest.game.hands, [activeId]: combinedHand },
               discardPile: { cards: [] },
               pozzettoStacks: nextStacks,
-              turn: { ...latest.game.turn, phase: 'action', hasDrawnThisTurn: true },
+              turn: { ...latest.game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
               lastAcquired: {
                 playerId: activeId,
                 cardIds: [...result.usedDiscardCards.map((c) => c.id), ...restOfPile.map((c) => c.id)],
@@ -2037,17 +2056,17 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
           void botDetachedFlight({ from: stockRect, to: handRect, faceDown: true })
         }
         set({
-          game: {
+          game: markStockDepletion({
             ...latest.game,
             stock: drawResult.stock,
             hands: { ...latest.game.hands, [activeId]: sortHand(drawResult.hand) },
-            turn: { ...latest.game.turn, phase: 'action', hasDrawnThisTurn: true },
+            turn: { ...latest.game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
             lastAcquired: {
               playerId: activeId,
               cardIds: drawResult.drawnCard ? [drawResult.drawnCard.id] : [],
               at: Date.now(),
             },
-          },
+          }),
         })
         await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
         if (isCancelled()) return
@@ -2060,20 +2079,27 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
         void botDetachedFlight({ from: stockRect, to: handRect, faceDown: true })
       }
       set({
-        game: {
+        game: markStockDepletion({
           ...latest.game,
           stock: drawResult.stock,
           hands: { ...latest.game.hands, [activeId]: sortHand(drawResult.hand) },
-          turn: { ...latest.game.turn, phase: 'action', hasDrawnThisTurn: true },
+          turn: { ...latest.game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
           lastAcquired: {
             playerId: activeId,
             cardIds: drawResult.drawnCard ? [drawResult.drawnCard.id] : [],
             at: Date.now(),
           },
-        },
+        }),
       })
       await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
       if (isCancelled()) return
+    } else {
+      set({
+        game: markStockDepletion({
+          ...latest.game,
+          turn: { ...latest.game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
+        }),
+      })
     }
     } // end !hasDrawnThisTurn
   }
@@ -2158,7 +2184,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
           ...nextGameBase,
           pozzettoStacks: nextStacks,
           hands: { ...nextGameBase.hands, [activeId]: sortHand(hand) },
-          turn: { ...nextGameBase.turn, phase: 'action', hasDrawnThisTurn: true },
+          turn: { ...nextGameBase.turn, phase: 'action' as const, hasDrawnThisTurn: true },
         },
       })
       await sleepRespectingPause(BOT_ACTION_MS, isCancelled)
@@ -2215,7 +2241,7 @@ async function runMockBotTurn(get: StoreGet, set: StoreSet): Promise<void> {
           ...snap.game,
           pozzettoStacks: nextStacks,
           hands: { ...snap.game.hands, [activeId]: sortHand(hand) },
-          turn: { ...snap.game.turn, phase: 'action', hasDrawnThisTurn: true },
+          turn: { ...snap.game.turn, phase: 'action' as const, hasDrawnThisTurn: true },
         },
       })
       await sleepRespectingPause(BOT_ACTION_MS, isCancelled)

@@ -26,6 +26,7 @@ function game(partial: Partial<GameState> & Pick<GameState, 'stock' | 'hands'>):
     lastAcquired: null,
     lastPlay: null,
     emptyHandFoulByTeam: { 'team-a': 0, 'team-b': 0 },
+    stockDepletedAtTurnNumber: null,
     ...partial,
   }
 }

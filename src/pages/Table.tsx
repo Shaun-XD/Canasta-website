@@ -22,6 +22,7 @@ import { evaluateShowEligibility, unmetShowConditions } from '../engine/showElig
 import type { CardModel, Player, Team } from '../types/game'
 import { meldCards } from '../types/game'
 import { planHandFan, scaledHandCardWidth } from './tableLayout'
+import { canOfferSuddenDeathEnd } from '../engine/turnEngine'
 
 const HAND_CARD_WIDTH = 78
 const HAND_BASE_COUNT = 13
@@ -327,18 +328,20 @@ export function Table() {
   const isDrawPhase = isLocalTurn && game.turn.phase === 'draw' && !roundOver
   const isActionPhase = isLocalTurn && game.turn.phase === 'action' && !roundOver
   const stockDepleted = game.stock.length === 0
+  const canPlayFromHandWithoutDraw = stockDepleted && isDrawPhase && !topTouchInProgress
+  const canOfferEndRound = !roundOver && canOfferSuddenDeathEnd(game, room.players.length)
   // Count only ids still in hand — stale ids from a prior online meld must not
   // block Discard while the UI only highlights the live card(s).
   const handIdSet = new Set(localHand.map((c) => c.id))
   const validSelectedCount = selectedCardIds.filter((id) => handIdSet.has(id)).length
   const canDiscard =
     !roundOver &&
-    (isActionPhase || (isLocalTurn && game.turn.phase === 'discard')) &&
+    (isActionPhase || canPlayFromHandWithoutDraw || (isLocalTurn && game.turn.phase === 'discard')) &&
     validSelectedCount === 1
 
   const showElig = localTeam ? evaluateShowEligibility(localTeam, localHand.length) : null
   const canDeclareShow =
-    isActionPhase &&
+    (isActionPhase || canPlayFromHandWithoutDraw) &&
     !!showElig &&
     showElig.reserveActivated &&
     showElig.canastaWinCondition &&
@@ -370,7 +373,9 @@ export function Table() {
       attemptMeld()
       return
     }
-    if (!isActionPhase) return reportInvalidAction('You can only meld during your action phase (after drawing).')
+    if (!isActionPhase && !canPlayFromHandWithoutDraw) {
+      return reportInvalidAction('You can only meld during your action phase (after drawing).')
+    }
     if (validSelectedCount === 0) return reportInvalidAction('Select hand cards to meld.')
     attemptMeld()
   }
@@ -468,6 +473,9 @@ export function Table() {
         </div>
 
         <div className="table-topbar-end flex shrink-0 items-center gap-1.5">
+          {canOfferEndRound && (
+            <EndRoundChip onClick={forceSuddenDeathEndRound} />
+          )}
           <PozzettoStacks
             compact
             teams={room.teams}
@@ -507,6 +515,17 @@ export function Table() {
               }}
             >
               {isPaused ? 'Resume timer' : 'Pause timer'}
+            </button>
+          )}
+          {canOfferEndRound && (
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false)
+                forceSuddenDeathEndRound()
+              }}
+            >
+              End round
             </button>
           )}
           <button
@@ -609,6 +628,7 @@ export function Table() {
               remainingSeconds={remainingSeconds}
               isPaused={isPaused}
               compact
+              stockEmpty={stockDepleted}
             />
           </div>
 
@@ -776,17 +796,6 @@ export function Table() {
               </button>
             )}
 
-            {stockDepleted && isLocalTurn && (
-              <button
-                type="button"
-                onClick={forceSuddenDeathEndRound}
-                className="action-btn action-btn-danger mx-auto !min-h-9 !text-xs"
-                title="Stock is empty. If you cannot Top Touch AND immediately empty your hand with a legal Show this turn, the round must end now."
-              >
-                Stock empty — End Round
-              </button>
-            )}
-
             {feedback && (
               <p className="mx-auto mt-0.5 w-full max-w-xl rounded-xl bg-red-900/35 px-4 py-2 text-center text-sm font-medium leading-snug text-red-50/90 ring-1 ring-red-300/25 backdrop-blur-sm sm:text-[14px]">
                 {feedback.message}
@@ -867,6 +876,7 @@ export function Table() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          {canOfferEndRound && <EndRoundChip onClick={forceSuddenDeathEndRound} />}
           <span className="hidden rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-white/55 ring-1 ring-white/10 sm:inline">
             Round {game.round} · Target {room.matchTargetScore} ·{' '}
             {timerEnabled ? `${room.turnTimerSeconds}s` : 'No timer'}
@@ -1010,6 +1020,7 @@ export function Table() {
               remainingSeconds={remainingSeconds}
               isPaused={isPaused}
               compact
+              stockEmpty={stockDepleted}
             />
           </div>
 
@@ -1083,7 +1094,12 @@ export function Table() {
             </div>
           </div>
 
-          {isDrawPhase && !topTouchInProgress && topDiscard && (
+          {isDrawPhase && !topTouchInProgress && stockDepleted && (
+            <p className="mx-auto text-center text-[10px] leading-relaxed text-white/40">
+              Stock empty — Top Touch the discard, or meld/discard from your hand.
+            </p>
+          )}
+          {isDrawPhase && !topTouchInProgress && !stockDepleted && topDiscard && (
             <p className="mx-auto text-center text-[10px] leading-relaxed text-white/40">
               Tap top discard to Top Touch.
             </p>
@@ -1098,17 +1114,6 @@ export function Table() {
                 Cancel Top Touch
               </button>
             </div>
-          )}
-
-          {stockDepleted && isLocalTurn && (
-            <button
-              type="button"
-              onClick={forceSuddenDeathEndRound}
-              className="action-btn action-btn-danger mx-auto !min-h-9 !text-xs"
-              title="Stock is empty. If you cannot Top Touch AND immediately empty your hand with a legal Show this turn, the round must end now."
-            >
-              Stock empty — End Round
-            </button>
           )}
 
           {feedback && (
@@ -1248,6 +1253,19 @@ export function Table() {
 
       {!localPlayer && null}
     </div>
+  )
+}
+
+function EndRoundChip({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-white/65 ring-1 ring-white/15 transition hover:bg-white/16 hover:text-white"
+      title="Everyone has had a turn with the stock empty. End the round and score."
+    >
+      End round
+    </button>
   )
 }
 
