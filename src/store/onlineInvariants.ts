@@ -23,6 +23,11 @@ export function shouldSkipOnlineSnapshot(opts: {
   if (!prevGame || !nextGame.lastPlay) return false
   if (prevGame.lastPlay?.at !== nextGame.lastPlay.at) return false
 
+  // Paced bots finish their discard animation before handing over the turn.
+  // That handover (and pause/resume) has no new card play, but must reach the UI.
+  const turnKeys = Object.keys(nextGame.turn) as (keyof GameState['turn'])[]
+  if (turnKeys.some(key => prevGame.turn[key] !== nextGame.turn[key])) return false
+
   const stockChanged = prevGame.stock.length !== nextGame.stock.length
   const localHandChanged =
     (prevGame.hands[localPlayerId ?? '']?.length ?? -1) !==

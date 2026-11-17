@@ -152,15 +152,17 @@ function aiContext(room: RoomState, game: GameState, team: Team, handSize: numbe
   }
 }
 
+type BotState = { room: RoomState; game: GameState }
+
 /**
- * Play one bot seat to completion (draw → optional melds → discard / show).
- * No DOM / animation — the online bridge applies this, then broadcasts.
+ * Yield each visible action so the online bridge can broadcast it and wait
+ * for its animation before advancing. No DOM or timers in the rules engine.
  */
-export function applyBotTurn(
+export function* botTurnSteps(
   room: RoomState,
   game: GameState,
   playerId: PlayerId,
-): { room: RoomState; game: GameState } {
+): Generator<BotState, BotState, void> {
   if (game.turn.activePlayerId !== playerId) return { room, game }
   if (room.status !== 'in-progress') return { room, game }
 
@@ -227,7 +229,7 @@ export function applyBotTurn(
               at: Date.now(),
             },
             lastPlay: cardPlay(playerId, 'top-touch', {
-              cardIds: result.usedDiscardCards.map((c) => c.id),
+              cardIds: [...drawPlan.handCardIds, ...result.usedDiscardCards.map((c) => c.id)],
               fromDiscardIds: result.usedDiscardCards.map((c) => c.id),
               count: restOfPile.length,
             }),
@@ -255,9 +257,10 @@ export function applyBotTurn(
         turn: { ...nextGame.turn, phase: 'action' as const, hasDrawnThisTurn: true },
       })
     }
+    yield { room: nextRoom, game: nextGame }
   }
 
-  const runAppends = (): boolean => {
+  const runAppends = function* (): Generator<BotState, boolean, void> {
     const team = teamOf()
     if (!team) return false
     let claimed = false
@@ -290,11 +293,12 @@ export function applyBotTurn(
         hands: { ...nextGame.hands, [playerId]: sortHand(hand) },
         lastPlay: cardPlay(playerId, 'meld', { cardIds: [plan.cardId] }),
       }
+      yield { room: nextRoom, game: nextGame }
     }
     return claimed
   }
 
-  const runNewMelds = (): boolean => {
+  const runNewMelds = function* (): Generator<BotState, boolean, void> {
     const team = teamOf()
     if (!team) return false
     let claimed = false
@@ -328,14 +332,15 @@ export function applyBotTurn(
         hands: { ...nextGame.hands, [playerId]: sortHand(hand) },
         lastPlay: cardPlay(playerId, 'meld', { cardIds: plan.cardIds }),
       }
+      yield { room: nextRoom, game: nextGame }
     }
     return claimed
   }
 
   for (let cycle = 0; cycle < 2; cycle += 1) {
-    const a = runAppends()
-    const m = runNewMelds()
-    const b = runAppends()
+    const a = yield* runAppends()
+    const m = yield* runNewMelds()
+    const b = yield* runAppends()
     if (!(a || m || b)) break
   }
 
@@ -350,10 +355,11 @@ export function applyBotTurn(
         hands: { ...nextGame.hands, [playerId]: sortHand(claim.hand) },
         pozzettoStacks: claim.pozzettoStacks,
       }
+      yield { room: nextRoom, game: nextGame }
       if (claim.hand.length > 0) {
-        runAppends()
-        runNewMelds()
-        runAppends()
+        yield* runAppends()
+        yield* runNewMelds()
+        yield* runAppends()
       }
     }
   }
@@ -383,9 +389,11 @@ export function applyBotTurn(
         hands: { ...nextGame.hands, [playerId]: sortHand(claim.hand) },
         discardPile: { cards: discarded.discardPile },
         pozzettoStacks: claim.pozzettoStacks,
+        turn: { ...nextGame.turn, phase: 'discard' },
         lastPlay: cardPlay(playerId, 'discard', { cardIds: [discardCard.id] }),
         pendingSlide: null,
       }
+      yield { room: nextRoom, game: nextGame }
       const teamAfter = findTeam(nextRoom, playerId)!
       const autoShow = tryAutoShow(nextRoom, nextGame, teamAfter, playerId)
       if (autoShow.ended) return autoShow
@@ -416,6 +424,14 @@ export function applyBotTurn(
     turn: advanceTurn(nextGame, nextRoom, playerId),
   }
   return { room: nextRoom, game: nextGame }
+}
+
+/** Resolve the same sequence immediately when no playback is requested. */
+export function applyBotTurn(room: RoomState, game: GameState, playerId: PlayerId): BotState {
+  const steps = botTurnSteps(room, game, playerId)
+  let step = steps.next()
+  while (!step.done) step = steps.next()
+  return step.value
 }
 
 /** Keep playing mock seats until a human must act, the round ends, or pause. */

@@ -46,6 +46,18 @@ describe('shouldRetryOnlineAction', () => {
 })
 
 describe('shouldSkipOnlineSnapshot', () => {
+  it.each<Partial<GameState['turn']>>([
+    { activePlayerId: 'p2', turnNumber: 2 },
+    { phase: 'discard' },
+    { isPaused: true, pausedAt: 2000 },
+    { startedAt: 3000 },
+    { hasDrawnThisTurn: true },
+  ])('keeps turn updates without a new card play: %j', (turn) => {
+    const prev = game({ stock: [], hands: { p1: [] }, lastPlay: play })
+    const next = { ...prev, turn: { ...prev.turn, ...turn } }
+    expect(shouldSkipOnlineSnapshot({ prevGame: prev, nextGame: next, localPlayerId: 'p1' })).toBe(false)
+  })
+
   it('does not skip a stock draw when stock shrinks or the local hand grows', () => {
     const prev = game({
       stock: [{ id: 's1', rank: '4', suit: 'clubs' }],

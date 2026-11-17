@@ -11,6 +11,7 @@ import type {
 import { DEFAULT_TARGET_SCORE, DEFAULT_TURN_TIMER_SECONDS, normalizeTurnTimerSeconds, normalizeMaxPlayers, type MaxPlayers } from '../types/game'
 import { buildShuffledDeck, dealHands, sortHand } from '../lib/deck'
 import { seedRemotePlayerFlights } from '../lib/seedRemoteFlights'
+import { BOT_ACTION_MS, BOT_BETWEEN_TURNS_MS } from '../engine/botPacing'
 import { shouldRetryOnlineAction, shouldSkipOnlineSnapshot } from './onlineInvariants'
 import { fillLobbyBots, removeLobbyBots, switchTeamAllowingBotSwap } from '../engine/lobbyBots'
 import { initialPozzettoState, shouldClaimPozzettoOnDiscard, shouldClaimPozzettoOnMeldEmpty } from '../engine/pozzetto'
@@ -286,10 +287,6 @@ function applyOnlineSnapshot(opts: {
   })
 }
 
-/** Per-action pacing for mock/bot turns — longer than the slow bot flight. */
-const BOT_ACTION_MS = 1400
-/** Extra pause after a bot finishes its turn, before the next bot (or human) acts. */
-const BOT_BETWEEN_TURNS_MS = 600
 
 const botFlip = { slow: true } as const
 function botDetachedFlight(opts: Parameters<typeof playDetachedCardFlight>[0]) {

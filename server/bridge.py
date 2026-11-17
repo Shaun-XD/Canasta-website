@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parent
 BRIDGE_DIR = ROOT / "game_bridge"
@@ -20,6 +21,7 @@ class GameBridge:
         self._next_id = 1
         self._lock = asyncio.Lock()
         self._ready = asyncio.Event()
+        self.on_state: Callable[[dict[str, Any]], None] | None = None
 
     async def start(self) -> None:
         if self._proc and self._proc.returncode is None:
@@ -84,6 +86,10 @@ class GameBridge:
             try:
                 msg = json.loads(line.decode())
             except json.JSONDecodeError:
+                continue
+            if msg.get("event") == "state":
+                if self.on_state:
+                    self.on_state(msg)
                 continue
             if msg.get("result", {}).get("ready") is True and msg.get("id") is None:
                 self._ready.set()

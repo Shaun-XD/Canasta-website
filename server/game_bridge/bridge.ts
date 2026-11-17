@@ -34,7 +34,8 @@ import {
   seatPlayersAlternating,
   switchTeamAllowingBotSwap,
 } from '../../src/engine/lobbyBots.ts'
-import { playBotsUntilHuman } from '../../src/engine/applyBotTurn.ts'
+import { botTurnSteps } from '../../src/engine/applyBotTurn.ts'
+import { BOT_ACTION_MS, BOT_BETWEEN_TURNS_MS } from '../../src/engine/botPacing.ts'
 
 const HAND_SIZE = 13
 const POZZETTO_SIZE = 11
@@ -43,6 +44,8 @@ const AVATAR_COLORS = ['#ef4444', '#3b82f6', '#eab308', '#22c55e', '#a855f7', '#
 interface Session {
   room: RoomState
   game: GameState | null
+  botTurn?: ReturnType<typeof botTurnSteps>
+  botTimer?: ReturnType<typeof setTimeout>
 }
 
 const sessions = new Map<string, Session>()
@@ -261,11 +264,50 @@ function requirePlayer(session: Session, playerId: string): Player {
   return player
 }
 
-function applyBots(session: Session): void {
-  if (!session.game) return
-  const next = playBotsUntilHuman(session.room, session.game)
-  session.room = next.room
-  session.game = next.game
+function stopBots(session: Session): void {
+  clearTimeout(session.botTimer)
+  session.botTimer = undefined
+  session.botTurn = undefined
+}
+
+/** Publish one action at a time; the RPC ack never waits for bot animations. */
+function scheduleBots(session: Session, delay?: number): void {
+  const game = session.game
+  const active = session.room.players.find(p => p.id === game?.turn.activePlayerId)
+  if (!game || session.room.status !== 'in-progress' || !active?.isMock) {
+    stopBots(session)
+    return
+  }
+  if (game.turn.isPaused) {
+    clearTimeout(session.botTimer)
+    session.botTimer = undefined
+    return
+  }
+  if (session.botTimer) return
+  const wait = delay ?? (session.botTurn ? BOT_ACTION_MS : BOT_BETWEEN_TURNS_MS)
+  session.botTurn ??= botTurnSteps(session.room, game, active.id)
+  session.botTimer = setTimeout(() => {
+    session.botTimer = undefined
+    const previousGame = session.game!
+    const step = session.botTurn!.next()
+    // Connection status, lobby settings and pause timing can change while a
+    // bot is waiting. Keep them instead of restoring the generator's snapshot.
+    session.room = { ...session.room, teams: step.value.room.teams, status: step.value.room.status }
+    const nextGame = step.value.game
+    session.game = {
+      ...nextGame,
+      turn: {
+        ...nextGame.turn,
+        startedAt: nextGame.turn.turnNumber === previousGame.turn.turnNumber
+          ? previousGame.turn.startedAt : Date.now(),
+      },
+    }
+    if (step.done) session.botTurn = undefined
+    process.stdout.write(JSON.stringify({
+      event: 'state', room: session.room, game: session.game,
+    }) + '\n')
+    scheduleBots(session, step.done ? BOT_BETWEEN_TURNS_MS : BOT_ACTION_MS)
+  }, wait)
 }
 
 // ===== RPC methods =====
@@ -535,9 +577,9 @@ function start_game(params: { roomId: string; playerId: string }): {
     })),
   })
   const game = dealNewRound(room, 1)
+  stopBots(session)
   session.room = room
   session.game = game
-  applyBots(session)
   return { room: session.room, game: session.game! }
 }
 
@@ -680,6 +722,7 @@ function attempt_meld(params: {
     return { room: session.room, game: session.game }
   }
 
+  stopBots(session)
   session.room = room
   session.game = game
   return { room, game }
@@ -763,9 +806,9 @@ function discard(params: { roomId: string; playerId: string; cardId: string }): 
   }
 
   game = { ...markStockDepletion(game), turn: advanceTurn(game, room, params.playerId), pendingSlide: null }
+  stopBots(session)
   session.room = room
   session.game = game
-  applyBots(session)
   return { room: session.room, game: session.game! }
 }
 
@@ -836,7 +879,6 @@ function auto_end_turn(params: { roomId: string; playerId: string }): {
   const hand = game.hands[params.playerId] ?? []
   if (hand.length === 0) {
     session.game = { ...game, turn: advanceTurn(game, session.room, params.playerId) }
-    applyBots(session)
     return { room: session.room, game: session.game! }
   }
   // Ensure drawn so discard is legal.
@@ -850,7 +892,6 @@ function auto_end_turn(params: { roomId: string; playerId: string }): {
       ...session.game!,
       turn: advanceTurn(session.game!, session.room, params.playerId),
     }
-    applyBots(session)
     return { room: session.room, game: session.game! }
   }
   return discard({ roomId: params.roomId, playerId: params.playerId, cardId })
@@ -881,7 +922,6 @@ function toggle_pause(params: { roomId: string; playerId: string }): {
     }
   }
   void params.playerId
-  if (!session.game.turn.isPaused) applyBots(session)
   return { room: session.room, game: session.game }
 }
 
@@ -903,9 +943,9 @@ function start_new_game(params: { roomId: string; playerId: string }): {
     })),
   })
   const game = dealNewRound(room, 1)
+  stopBots(session)
   session.room = room
   session.game = game
-  applyBots(session)
   return { room: session.room, game: session.game! }
 }
 
@@ -932,9 +972,9 @@ function next_round(params: { roomId: string; playerId: string }): {
     roundScoresHistory: session.game.roundScoresHistory,
   }
   void params.playerId
+  stopBots(session)
   session.room = room
   session.game = game
-  applyBots(session)
   return { room: session.room, game: session.game! }
 }
 
@@ -955,6 +995,7 @@ function return_to_lobby(params: { roomId: string; playerId: string }): {
       pozzetto: initialPozzettoState(),
     })),
   }
+  stopBots(session)
   session.game = null
   return { room: session.room, game: null }
 }
@@ -1013,6 +1054,8 @@ rl.on('line', (line) => {
   }
   try {
     const result = fn(req.params ?? {})
+    const roomId = (req.params as { roomId?: string } | undefined)?.roomId
+    if (roomId) scheduleBots(requireSession(roomId))
     process.stdout.write(JSON.stringify({ id, ok: true, result }) + '\n')
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

@@ -59,8 +59,12 @@ sio = socketio.AsyncServer(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    bridge.on_state = lambda state: _schedule_broadcast(
+        state["room"]["roomId"], state["room"], state.get("game")
+    )
     await bridge.start()
     yield
+    bridge.on_state = None
     await bridge.stop()
 
 

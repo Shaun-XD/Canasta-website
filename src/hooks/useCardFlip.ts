@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { isHandheldDevice } from '../lib/device'
+import { BOT_FLIP_DURATION_MS } from '../engine/botPacing'
+export { BOT_FLIP_DURATION_MS } from '../engine/botPacing'
 
 /** A position in the scroll-stable / transform-stable coordinate space. */
 interface FlipPosition {
@@ -47,8 +49,6 @@ export function endHandReorder() {
 // Distinctly visible motion for human plays: long enough to read as real
 // travel, short enough to stay snappy.
 export const FLIP_DURATION_MS = 380
-/** Slower flights for bot/mock plays so the user can see what was moved. */
-export const BOT_FLIP_DURATION_MS = 900
 const FLIP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)' // ease-out
 /** Detached bot/remote flights: desktop 72; phones match the local hand. */
 const DETACHED_FLIGHT_WIDTH_DESKTOP = 72
@@ -79,6 +79,11 @@ export function detachedFlightWidth(from: DOMRect | FlipPosition, to: DOMRect | 
 
 /** Card ids whose next FLIP flight should use {@link BOT_FLIP_DURATION_MS}. */
 const pendingBotFlipIds = new Set<string>()
+
+/** Keep a visible discard card's measured origin while slowing its next flight. */
+export function slowNextCardFlip(id: string): void {
+  pendingBotFlipIds.add(id)
+}
 
 function consumeFlipDuration(id?: string): number {
   if (id && pendingBotFlipIds.has(id)) {

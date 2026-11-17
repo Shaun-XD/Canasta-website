@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { act, render, cleanup } from '@testing-library/react'
 import { useState } from 'react'
 import { AnimatedCard } from '../components/AnimatedCard'
-import { seedFlipOrigin } from './useCardFlip'
+import { BOT_FLIP_DURATION_MS, seedFlipOrigin, slowNextCardFlip } from './useCardFlip'
 import { useHandReorder } from './useHandReorder'
 
 /**
@@ -57,6 +57,20 @@ function HandHarness({ cardIds }: { cardIds: string[] }) {
 }
 
 describe('stock draw -> hand FLIP animation', () => {
+  it('keeps a measured discard origin and uses the slow duration for a remote Top Touch', () => {
+    const origin = new DOMRect(600, 40, 56, 78)
+    seedFlipOrigin('remote-top-touch', origin)
+    slowNextCardFlip('remote-top-touch')
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(
+      rectFrom({ top: 300, left: 120, width: 56, height: 78 }),
+    )
+    render(<AnimatedCard flipId="remote-top-touch" rank="K" suit="spades" />)
+    expect(animateSpy).toHaveBeenCalledTimes(1)
+    const [frames, options] = animateSpy.mock.calls[0]
+    expect(frames[0]).toEqual({ transform: 'translate(480px, -260px)' })
+    expect(options.duration).toBe(BOT_FLIP_DURATION_MS)
+  })
+
   it('plays a flight animation when a freshly-drawn card, seeded from the stock pile rect, mounts into the hand', async () => {
     const stockRect = new DOMRect(600, 40, 56, 78) // far from where the card lands in the hand
     const landingRect = { top: 500, left: 120, width: 68, height: 95 }

@@ -4,6 +4,7 @@ import {
   playDetachedCardFlight,
   playPozzettoClaimFlights,
   seedFlipOriginFromAnchor,
+  slowNextCardFlip,
 } from '../hooks/useCardFlip'
 import { meldCards } from '../types/game'
 import type { CardPlayEvent, GameState, PlayerId, RoomState } from '../types/game'
@@ -81,7 +82,10 @@ function applyPublicPlay(play: CardPlayEvent): void {
   // and the table at the same time.
   const fromDiscard = new Set(play.fromDiscardIds)
   for (const id of play.cardIds) {
-    if (fromDiscard.has(id)) continue
+    if (fromDiscard.has(id)) {
+      slowNextCardFlip(id)
+      continue
+    }
     seedFlipOriginFromAnchor(id, handAnchor, remoteFlip)
   }
 }

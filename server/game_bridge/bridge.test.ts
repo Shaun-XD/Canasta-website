@@ -1,5 +1,6 @@
 /** @vitest-environment node */
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { BOT_ACTION_MS, BOT_BETWEEN_TURNS_MS } from '../../src/engine/botPacing'
 import type { GameState, RoomState } from '../../src/types/game'
 
 const transport = vi.hoisted(() => ({ onLine: (_line: string) => {} }))
@@ -35,6 +36,89 @@ function startHumans() {
   }
   return { host, state: rpc('start_game', { roomId: host.roomId, playerId: host.playerId }) }
 }
+
+function advanceBots(ms: number): State[] {
+  const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  try {
+    vi.advanceTimersByTime(ms)
+    return output.mock.calls.map(([line]) => JSON.parse(String(line)))
+      .filter(message => message.event === 'state')
+  } finally { output.mockRestore() }
+}
+
+function startBots() {
+  vi.useFakeTimers()
+  const host = rpc<{ roomId: string; playerId: string }>('create_room', {
+    playerName: 'Host', maxPlayers: 4, turnTimerSeconds: 0,
+  })
+  const params = { roomId: host.roomId, playerId: host.playerId }
+  rpc('fill_bots', params)
+  rpc('set_ready', { ...params, ready: true })
+  rpc('start_game', params)
+  const drawn = rpc('draw', params)
+  const state = rpc('discard', { ...params, cardId: drawn.game.hands[host.playerId][0].id })
+  return { host, params, state }
+}
+
+afterEach(() => {
+  vi.clearAllTimers()
+  vi.useRealTimers()
+})
+
+describe('online bot pacing', () => {
+  it('broadcasts every opponent and teammate action separately before returning to the human', () => {
+    const { host, params, state } = startBots()
+    expect(state.game.turn.turnNumber).toBe(2)
+    expect(state.game.turn.activePlayerId).not.toBe(host.playerId)
+    expect(advanceBots(BOT_BETWEEN_TURNS_MS - 1)).toEqual([])
+    const first = advanceBots(1)
+    expect(first).toHaveLength(1)
+    expect(['draw-stock', 'top-touch']).toContain(first[0].game.lastPlay?.kind)
+    expect(advanceBots(BOT_ACTION_MS - 1)).toEqual([])
+    const frames = [...first, ...advanceBots(1)]
+    for (let i = 0; i < 100; i++) {
+      const current = rpc('get_state', params)
+      if (current.game.turn.activePlayerId === host.playerId) break
+      frames.push(...advanceBots(BOT_BETWEEN_TURNS_MS))
+    }
+    const finished = rpc('get_state', params)
+    expect(finished.game.turn.activePlayerId).toBe(host.playerId)
+    expect(finished.game.turn.turnNumber).toBe(5)
+    for (const bot of state.room.players.filter(p => p.isMock)) {
+      const plays = frames.map(f => f.game.lastPlay).filter(p => p?.actorId === bot.id)
+      expect(plays.some(p => p?.kind === 'draw-stock' || p?.kind === 'top-touch')).toBe(true)
+      expect(plays.some(p => p?.kind === 'discard')).toBe(true)
+    }
+    // All frames are immutable snapshots; later actions cannot change an
+    // earlier frame's hidden-hand counts, stock, or active player.
+    expect(first[0].game.turn.turnNumber).toBe(2)
+  })
+
+  it('pauses between actions, preserves reconnects, and cancels playback on returning to the lobby', () => {
+    const { params } = startBots()
+    advanceBots(BOT_BETWEEN_TURNS_MS)
+    const paused = rpc('toggle_pause', params)
+    expect(advanceBots(10000)).toEqual([])
+    expect(rpc('get_state', params).game).toEqual(paused.game)
+    rpc('set_connection', { ...params, status: 'disconnected' })
+    rpc('toggle_pause', params)
+    expect(advanceBots(BOT_ACTION_MS - 1)).toEqual([])
+    const frames = advanceBots(1)
+    expect(frames).toHaveLength(1)
+    expect(frames[0].room.players.find(p => p.id === params.playerId)?.connectionStatus).toBe('disconnected')
+    rpc('return_to_lobby', params)
+    expect(advanceBots(10000)).toEqual([])
+    expect(rpc('get_state', params).game).toBeNull()
+  })
+
+  it('drops an old bot turn when a new game starts', () => {
+    const { params } = startBots()
+    advanceBots(BOT_BETWEEN_TURNS_MS)
+    const restarted = rpc('start_new_game', params)
+    expect(advanceBots(10000)).toEqual([])
+    expect(rpc('get_state', params).game).toEqual(restarted.game)
+  })
+})
 
 describe('realtime bridge scoring', () => {
   it('initializes foul counters for every new online game', () => {
