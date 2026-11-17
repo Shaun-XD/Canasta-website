@@ -6,7 +6,8 @@ import { PlayerAvatar } from '../components/PlayerAvatar'
 import { MiniCardStack } from '../components/MiniCardStack'
 import { Card } from '../components/Card'
 import { AnimatedCard } from '../components/AnimatedCard'
-import { DiscardPileView, DISCARD_CARD_WIDTH, DISCARD_VISIBLE_CARDS, discardFanWidth } from '../components/DiscardPileView'
+import { DiscardPileView } from '../components/DiscardPileView'
+import { DISCARD_CARD_WIDTH, DISCARD_VISIBLE_CARDS, discardFanWidth } from '../lib/discardLayout'
 import { PozzettoStacks } from '../components/PozzettoStacks'
 import { TurnBanner } from '../components/TurnBanner'
 import { TurnTimerBadge } from '../components/TurnTimerBadge'
@@ -90,10 +91,15 @@ export function Table() {
     exitToHome,
     rejoinOnlineSession,
   } = useGameStore((s) => s.actions)
+  const [sessionChecked, setSessionChecked] = useState(false)
 
   // Restore socket→player binding after refresh / reconnect.
   useEffect(() => {
-    void rejoinOnlineSession()
+    let cancelled = false
+    void rejoinOnlineSession().finally(() => {
+      if (!cancelled) setSessionChecked(true)
+    })
+    return () => { cancelled = true }
   }, [roomId, rejoinOnlineSession])
 
   useEffect(() => {
@@ -195,7 +201,7 @@ export function Table() {
     if (el.parentElement) ro.observe(el.parentElement)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [handheld])
+  }, [handheld, game?.roomId])
 
   // Classic table seats: teammate North, opponents West/East (clockwise from local).
   // 1v1: sole opponent sits North (no teammate / side seats).
@@ -301,6 +307,9 @@ export function Table() {
     }
   }, [draggingId, handheld, dragPoint])
 
+  if (!room && !sessionChecked) {
+    return <div className="felt-bg flex min-h-screen items-center justify-center text-white/70">Reconnecting to game…</div>
+  }
   if (!room || room.roomId !== roomId) return <Navigate to="/" replace />
   if (room.status === 'lobby') return <Navigate to={`/lobby/${roomId}`} replace />
   if (!game || !seating) {
@@ -1354,7 +1363,7 @@ function SidePlayer({
         <div className={`side-player-meta min-w-0 ${compact ? 'w-full text-center' : 'flex-1'}`}>
           <p className={`font-bold leading-tight text-white ${dense ? 'truncate text-[9px]' : compact ? 'truncate text-[10px] sm:text-xs' : 'truncate text-xs'}`}>
             {player.name}
-            {highlight && <span className="ml-1 text-[9px] font-semibold text-yellow-300/90">(bot)</span>}
+            {player.isMock && <span className="ml-1 text-[9px] font-semibold text-yellow-300/90">(bot)</span>}
           </p>
           {compact && (
             <p className={`truncate text-white/45 ${dense ? 'text-[8px]' : 'text-[9px]'}`}>

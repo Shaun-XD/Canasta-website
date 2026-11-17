@@ -144,6 +144,7 @@ function dealNewRound(room: RoomState, round = 1): GameState {
     gameOverTeamId: null,
     lastAcquired: null,
     lastPlay: null,
+    emptyHandFoulByTeam: { 'team-a': 0, 'team-b': 0 },
     stockDepletedAtTurnNumber: null,
   }
 }
@@ -204,12 +205,17 @@ function endRoundWithScore(
   endingType: 'show' | 'sudden-death',
   showingTeamId: TeamId | null,
 ): { room: RoomState; game: GameState } {
+  if (game.lastRoundScores?.round === game.round) return { room, game }
   const [teamA, teamB] = room.teams as [Team, Team]
   const handsByTeam: Record<TeamId, CardModel[]> = {
     'team-a': teamA.playerIds.flatMap((pid) => game.hands[pid] ?? []),
     'team-b': teamB.playerIds.flatMap((pid) => game.hands[pid] ?? []),
   }
-  const result = scoreRound(game.round, endingType, [teamA, teamB], handsByTeam, showingTeamId)
+  const result = scoreRound(
+    game.round, endingType, [teamA, teamB], handsByTeam, showingTeamId,
+    { 'team-a': 0, 'team-b': 0 },
+    game.emptyHandFoulByTeam,
+  )
   const teams = room.teams.map((t) => ({
     ...t,
     score: t.score + result.teams[t.id].total,

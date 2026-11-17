@@ -1,12 +1,8 @@
 import { useLayoutEffect, useRef } from 'react'
 import type { CardModel } from '../types/game'
 import { AnimatedCard } from './AnimatedCard'
+import { DISCARD_CARD_WIDTH, DISCARD_OVERLAP_RATIO, discardFanWidth } from '../lib/discardLayout'
 
-export const DISCARD_CARD_WIDTH = 64
-/** How many cards fit in the visible window before older ones hide to the left (phone / tablet). */
-export const DISCARD_VISIBLE_CARDS = 9
-/** Fraction of each card's width covered by the next — constant so the 9-card window stays readable. */
-export const DISCARD_OVERLAP_RATIO = 0.55
 /** Desktop fan overlap — lower = wider fan / more of each card visible. */
 const DESKTOP_OVERLAP_RATIO = 0.48
 /**
@@ -15,14 +11,6 @@ const DESKTOP_OVERLAP_RATIO = 0.48
  * this is treated as a scroll/drag through the pile instead.
  */
 const CLICK_DRAG_THRESHOLD_PX = 6
-
-/** Visible slot width for `count` cards (capped at {@link DISCARD_VISIBLE_CARDS}). */
-export function discardFanWidth(cardWidth: number, count: number): number {
-  const n = Math.max(0, Math.min(DISCARD_VISIBLE_CARDS, count))
-  if (n <= 1) return Math.round(cardWidth)
-  const peek = cardWidth * (1 - DISCARD_OVERLAP_RATIO)
-  return Math.round(cardWidth + (n - 1) * peek)
-}
 
 function DiscardCardFace({
   card,

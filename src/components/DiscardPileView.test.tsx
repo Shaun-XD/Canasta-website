@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import { DiscardPileView, discardFanWidth } from './DiscardPileView'
+import { DiscardPileView } from './DiscardPileView'
+import { discardFanWidth } from '../lib/discardLayout'
 import { c } from '../engine/testHelpers'
 
 describe('discardFanWidth', () => {

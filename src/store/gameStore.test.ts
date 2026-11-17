@@ -678,4 +678,20 @@ describe('empty stock — play from hand, then End Round after a full circle', (
     started.actions.forceSuddenDeathEndRound()
     expect(useGameStore.getState().room?.status).toBe('round-end')
   })
+
+  it('scores an ended round only once when End Round is requested again', () => {
+    const started = startAndEmptyStock()
+    useGameStore.setState({
+      game: {
+        ...started.game!,
+        turn: { ...started.game!.turn, turnNumber: started.game!.turn.turnNumber + 5 },
+      },
+    })
+    started.actions.forceSuddenDeathEndRound()
+    const scored = useGameStore.getState()
+    expect(scored.game!.roundScoresHistory).toHaveLength(1)
+    started.actions.forceSuddenDeathEndRound()
+    expect(useGameStore.getState().room!.teams).toEqual(scored.room!.teams)
+    expect(useGameStore.getState().game!.roundScoresHistory).toHaveLength(1)
+  })
 })

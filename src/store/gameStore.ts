@@ -685,6 +685,7 @@ function endRoundWithScore(
   endingType: 'show' | 'sudden-death',
   showingTeamId: TeamId | null,
 ): { room: RoomState; game: GameState } {
+  if (game.lastRoundScores?.round === game.round) return { room, game }
   const [teamA, teamB] = room.teams as [Team, Team]
   const handsByTeam: Record<TeamId, CardModel[]> = {
     'team-a': teamA.playerIds.flatMap((pid) => game.hands[pid] ?? []),
