@@ -1,0 +1,18 @@
+{
+  "url": "https://canasta-api-production.up.railway.app",
+  "result": "PASS",
+  "checks": [
+    "health",
+    "WebSocket",
+    "timer",
+    "fill/remove bots",
+    "2/4-player capacity",
+    "4 human clients",
+    "full-room rejection",
+    "ready/start",
+    "pause/resume",
+    "4 synchronized draw/discard turns",
+    "out-of-turn rejection",
+    "disconnect/rejoin"
+  ]
+}

@@ -1,0 +1,4 @@
+{"profile":"OnePlus unfolded","result":"PASS","metrics":{"roomy":true,"discard":[66,92],"meld":[83,54],"width":825,"docWidth":825},"errors":[]}
+{"profile":"Galaxy unfolded","result":"PASS","metrics":{"roomy":true,"discard":[56,78],"meld":[72,48],"width":690,"docWidth":690},"errors":[]}
+{"profile":"Phone landscape","result":"PASS","metrics":{"roomy":false,"discard":[33,46],"meld":[34,46],"width":844,"docWidth":844},"errors":[]}
+{"profile":"Desktop same viewport","result":"PASS","metrics":{"roomy":false,"discard":[68,118],"meld":[116,30],"width":825,"docWidth":825},"errors":[]}

@@ -1,0 +1,48 @@
+{
+  "installedCommit": "5d6188c",
+  "fillRemoveRefill": true,
+  "readyStart": true,
+  "pauseResume": true,
+  "humanDrawDiscard": true,
+  "returnedToHumanTurn": 5,
+  "bots": [
+    {
+      "role": "teammate",
+      "actions": [
+        "draw-stock",
+        "meld",
+        "meld",
+        "discard"
+      ],
+      "actionGapsMs": [
+        1402,
+        1402,
+        1401
+      ]
+    },
+    {
+      "role": "opponent",
+      "actions": [
+        "draw-stock",
+        "meld",
+        "meld",
+        "discard"
+      ],
+      "actionGapsMs": [
+        1403,
+        1402,
+        1401
+      ]
+    }
+  ],
+  "screenRecording": {
+    "source": "Android screenrecord on active inner display",
+    "dimensions": [
+      1134,
+      1220
+    ],
+    "variableRateFrames": 131,
+    "limitSeconds": 25,
+    "observed": "Moving face-up cards during teammate and opponent turns. Opponent 4 of hearts left the right-hand seat and landed in the discard pile."
+  }
+}

@@ -1,0 +1,31 @@
+
+> canasta-website@0.0.0 lint
+> oxlint
+
+
+> canasta-website@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.12 /private/tmp/canasta-rc-5d6188c.dNpXAx
+
+
+ Test Files  20 passed (20)
+      Tests  248 passed (248)
+   Start at  01:56:08
+   Duration  16.92s (transform 6.53s, setup 0ms, import 12.18s, tests 4.35s, environment 74.68s)
+
+
+> canasta-website@0.0.0 build
+> tsc -b && vite build
+
+vite v8.3.8 building client environment for production...
+transforming...
+✓ 92 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   1.32 kB │ gzip:   0.65 kB
+dist/assets/index-Bp_wvOmM.css   66.41 kB │ gzip:  12.35 kB
+dist/assets/index-SfffLYmI.js   425.19 kB │ gzip: 128.55 kB
+
+✓ built in 2.17s

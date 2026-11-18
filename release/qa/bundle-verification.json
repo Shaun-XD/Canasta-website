@@ -1,0 +1,29 @@
+{
+  "commit": "5d6188cc24d2323fc0820b20cdc9ba54e43647ea",
+  "aab": "Canasta-1.0.0-1-5d6188c.aab",
+  "sha256": "3ca8f703375ef4a9812e2a02440a9d601e82c613a9a7df0635a97f6869be8004",
+  "bytes": 4037136,
+  "package": "io.github.shaunxd.canasta",
+  "versionName": "1.0.0",
+  "versionCode": 1,
+  "targetSdk": 36,
+  "minSdk": 24,
+  "nativeLibraries": 0,
+  "permissions": [
+    "android.permission.INTERNET",
+    "io.github.shaunxd.canasta.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+  ],
+  "releaseWebViewDebugging": false,
+  "allowBackup": false,
+  "usesCleartextTraffic": false,
+  "packagedOrigin": "https://canasta-website.vercel.app",
+  "socket": "https://canasta-api-production.up.railway.app",
+  "notices": [
+    "legal/apache-2.0.txt",
+    "legal/canasta-gpl.txt",
+    "legal/index.html",
+    "legal/npm-notices.txt"
+  ],
+  "bundletoolValidation": "passed",
+  "jarSignature": "unsigned"
+}

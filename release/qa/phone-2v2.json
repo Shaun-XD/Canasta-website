@@ -1,0 +1,25 @@
+{
+  "tested": "2026-11-19 Asia/Hong_Kong",
+  "sourceCommit": "5d6188c",
+  "appVersion": "1.0.0 (1)",
+  "install": "adb install -r of the bundletool universal APK generated from the clean AAB; in-place upgrade during an isolated production match",
+  "aabSha256": "3ca8f703375ef4a9812e2a02440a9d601e82c613a9a7df0635a97f6869be8004",
+  "installedApkSha256": "ac1e74e3746b43567af5e481b98e501e3bc016a2306a222113a3a024867d1b40",
+  "device": "CardsPhone Android API 36 ARM64 emulator, native 1920x1080 landscape, 320 dpi",
+  "backend": "https://canasta-api-production.up.railway.app",
+  "participants": "Android host, independent synthetic online human peer, teammate bot and opponent bot",
+  "setupOnEarlierCandidate": "Created a four-seat online room, filled three seats, removed the bots, joined an independent human by code, filled the remaining two seats, set Ready and started the match.",
+  "verifiedOnThisCandidate": [
+    "The Android Resume online table control restored the same ongoing production match after package replacement.",
+    "Touched the stock, hand cards and Discard on Android; independent peer observed later turns, bot play and control returning to the host.",
+    "Android table-menu Pause timer suspended the synchronized game at turn 41. The peer confirmed Resume timer restored play.",
+    "With the stock empty, Android End round scored round 1. The independent client showed Team Red 285 and Team Blue -135.",
+    "Scrolled the Android score panel and pressed Next round. The independent client showed round 2, turn 1, host seat active, both scores retained."
+  ],
+  "evidence": [
+    "release/store/screenshots/phone-partnership-table.png",
+    "release/store/screenshots/phone-partnership-meld.png",
+    "release/store/screenshots/phone-round-score.png"
+  ],
+  "environmentNotes": "The dedicated AVD displayed Android System UI, launcher and Digital Wellbeing process dialogs during heavy concurrent build/AVD startup. These were Android system processes. The AVD used its persistent data when relaunched with host GPU and 3072 MB memory. Real hardware performance was not tested."
+}

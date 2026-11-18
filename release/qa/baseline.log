@@ -1,0 +1,30 @@
+
+> canasta-website@0.0.0 lint
+> oxlint
+
+
+> canasta-website@0.0.0 build
+> tsc -b && vite build
+
+vite v8.3.8 building client environment for production...
+transforming...
+✓ 91 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   1.60 kB │ gzip:   0.76 kB
+dist/assets/index-vIpbK_rB.css   65.91 kB │ gzip:  12.23 kB
+dist/assets/index-BzRFMp-8.js   424.63 kB │ gzip: 128.36 kB
+
+✓ built in 770ms
+
+> canasta-website@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.12 /private/tmp/canasta-play-qa/baseline
+
+
+ Test Files  18 passed (18)
+      Tests  245 passed (245)
+   Start at  01:21:02
+   Duration  14.79s (transform 6.03s, setup 0ms, import 8.93s, tests 2.33s, environment 79.02s)

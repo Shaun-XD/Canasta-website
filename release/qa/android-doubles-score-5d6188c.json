@@ -1,0 +1,107 @@
+{
+  "source": "5d6188cc24d2323fc0820b20cdc9ba54e43647ea",
+  "installedApkSha256": "ac1e74e3746b43567af5e481b98e501e3bc016a2306a222113a3a024867d1b40",
+  "environment": "API 36 ARM64 CardsPhone emulator, 1080x1920, landscape, 320 dpi",
+  "install": "bundletool universal APK, installed over the preceding test build to verify a real-room upgrade and resume",
+  "backend": "https://canasta-api-production.up.railway.app",
+  "setup": "Android host and separate production Socket.IO guest, with one teammate bot and one opponent bot. Room began on an earlier candidate. The replacement resumed the same seat and was used for play, timer, and round transition.",
+  "checks": [
+    "same room, seat and existing melds after install -r",
+    "Android host drew and discarded; peer saw turn advance",
+    "Android paused then resumed the timer; independent peer confirmed both states",
+    "played with depleted stock; Android End round scored both teams",
+    "Android Next round dealt a full new stock and both totals persisted"
+  ],
+  "peerObservedTransitions": [
+    {
+      "monitorTimeUtc": "2026-11-18T18:06:21Z",
+      "turn": 39,
+      "round": 1,
+      "status": "in-progress",
+      "paused": false,
+      "stock": 0,
+      "scores": [
+        0,
+        0
+      ]
+    },
+    {
+      "monitorTimeUtc": "2026-11-18T18:06:33Z",
+      "turn": 41,
+      "round": 1,
+      "status": "in-progress",
+      "paused": true,
+      "stock": 0,
+      "scores": [
+        0,
+        0
+      ]
+    },
+    {
+      "monitorTimeUtc": "2026-11-18T18:06:40Z",
+      "turn": 41,
+      "round": 1,
+      "status": "in-progress",
+      "paused": false,
+      "stock": 0,
+      "scores": [
+        0,
+        0
+      ]
+    },
+    {
+      "monitorTimeUtc": "2026-11-18T18:07:07Z",
+      "turn": 47,
+      "round": 1,
+      "status": "round-end",
+      "paused": false,
+      "stock": 0,
+      "scores": [
+        285,
+        -135
+      ]
+    },
+    {
+      "monitorTimeUtc": "2026-11-18T18:07:59Z",
+      "turn": 1,
+      "round": 2,
+      "status": "in-progress",
+      "paused": false,
+      "stock": 33,
+      "scores": [
+        285,
+        -135
+      ]
+    }
+  ],
+  "limitations": [
+    "Android system processes showed ANR dialogs on this separate phone AVD during boot/in-place APK update. The installed game subsequently recovered and completed the tested interactions.",
+    "Foldable results, actual hinge tests and clean installs are recorded separately."
+  ],
+  "productionBotPacing": {
+    "measurement": "Independent peer received distinct lastPlay records. Intervals are server event timestamps within one bot turn, sampled after the final installed 2v2 table was confirmed.",
+    "roles": {
+      "teammate": {
+        "actionTypes": [
+          "discard",
+          "draw-stock",
+          "meld",
+          "top-touch"
+        ],
+        "consecutiveActions": 13,
+        "minMs": 1399,
+        "maxMs": 1404
+      },
+      "opponent": {
+        "actionTypes": [
+          "discard",
+          "draw-stock",
+          "meld"
+        ],
+        "consecutiveActions": 3,
+        "minMs": 1401,
+        "maxMs": 1402
+      }
+    }
+  }
+}

@@ -9,7 +9,7 @@ Last inspected on 2026-11-19 (Hong Kong time).
 | Store icon | graphics/play-icon.png | 512 × 512, RGBA PNG | A cream diamond card overlapping a gold card on green felt. |
 | Feature graphic | graphics/feature-graphic.png | 1024 × 500, RGB PNG | Rajasthani Canasta with a run of seven, eight, and nine of diamonds on a green card table. |
 
-The feature illustration is promotional art. Only screenshots from an installed Android build belong in the screenshots section. The real captures, install source, version and device should be recorded alongside them before upload.
+The feature illustration is promotional art. The screenshots and alt text in [screenshots/README.md](screenshots/README.md) come from the installed replacement candidate. The accompanying inventory identifies its AAB, install source and emulator for each image.
 
 ## Editable sources and native integration
 
@@ -30,6 +30,6 @@ The ready-to-use PNGs and native resources are checked into the release branch. 
 
 Obtain at least two faithful screenshots of the installed candidate. For game recommendations Google requests at least three landscape 16:9 gameplay images at 1920 × 1080 or above, or the portrait equivalent. Prefer native 1920 × 1080 landscape where the table, hand and controls remain visible. Avoid status notifications and any genuine names, email addresses, room/session identifiers or account details. Prefer isolated solo matches with synthetic player names and capture three distinct stages of play. Check the device date, release identity and install method, and retain the original captures. Do not use website renders or viewport-only tests.
 
-Use `python3 release/store/artwork/prepare_screenshot.py DEVICE_CAPTURE.png DESTINATION.png` to export individual opaque Android captures at their original size. The script rejects unsupported aspect ratios, transparency, dimensions and duplicate-path output. It never manufactures gameplay, crops a hand or enlarges the image. Inspect the result manually and supply succinct alt text describing only what is visible.
+Use `python3 release/store/artwork/prepare_screenshot.py DEVICE_CAPTURE.png DESTINATION.png` to export individual opaque Android captures at their original size. The script rejects unsupported aspect ratios, transparency, dimensions and duplicate-path output. When a room code is visible, `--room-code-bounds left top right bottom` covers only that text using the surrounding header color. The export preserves the complete game field. Inspect the result manually and supply succinct alt text describing only what is visible.
 
 Google Play requires two screenshots across device types, in JPEG or RGB PNG, with each side between 320 and 3840 pixels and aspect ratio no wider/taller than 2:1. The feature graphic requires JPEG or 24-bit PNG and the icon 32-bit PNG with a maximum of 1,024 KB. [Google Play preview assets](https://support.google.com/googleplay/android-developer/answer/9866151?hl=en). [Android adaptive icon dimensions and safety zone](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive).

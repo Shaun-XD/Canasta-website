@@ -1,0 +1,18 @@
+{
+  "source": "5d6188cc24d2323fc0820b20cdc9ba54e43647ea",
+  "aabSha256": "3ca8f703375ef4a9812e2a02440a9d601e82c613a9a7df0635a97f6869be8004",
+  "bundletool": "1.18.3",
+  "gradle": "8.14.7",
+  "androidAppCompat": "1.8.0",
+  "nativeLint": "No issues found.",
+  "webLint": "passed",
+  "typecheck": "passed",
+  "webBuild": "passed",
+  "unitTests": 248,
+  "testFiles": 20,
+  "npmAuditProduction": 0,
+  "npmAuditIncludingDev": 0,
+  "apkSha256": "ac1e74e3746b43567af5e481b98e501e3bc016a2306a222113a3a024867d1b40",
+  "apkSigner": "existing local Android debug key, for emulator testing only",
+  "playUploadSigning": "pending account and cert verification"
+}

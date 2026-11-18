@@ -26,7 +26,7 @@ Play Rajasthani Canasta on Android in singles or doubles. Invite friends with a 
 
 - Category **Game → Card**. Price **Free**. Proposed store language **English (United States)**.
 - Use the existing app identity if the authorized Console shows a Canasta listing. The proposed title above distinguishes the rules variant and fits the 30-character limit. Check the existing title, release history and localization before changing an existing listing or pasting first-release notes.
-- Website destination for the game is https://canasta-website.vercel.app/. Use the published privacy URL only after release lead verifies it. Enter an owner-designated, monitored public support email.
+- Use the [live game website](https://canasta-website.vercel.app/) and the [published Android privacy policy](https://github.com/Shaun-XD/Canasta-website/blob/android-privacy-policy/PRIVACY.md). Enter an owner-designated, monitored public support email.
 - No promotional video is required for the phone listing. No third-party store logos, price badges or rank claims are used.
 
 Character limits were checked against [Google Play Console Help](https://support.google.com/googleplay/android-developer/answer/9859152?hl=en) on 2026-11-19 Hong Kong time.

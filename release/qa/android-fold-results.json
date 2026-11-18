@@ -1,0 +1,83 @@
+[
+  {
+    "check": "inner-portrait",
+    "physical": "2268x2440",
+    "committedState": "OPENED",
+    "webViewPixels": [
+      2268,
+      2216
+    ],
+    "rotationGate": false,
+    "stockWidthPx": 182,
+    "turn": 1,
+    "sameRoomSeatHand": true
+  },
+  {
+    "check": "inner-landscape",
+    "physical": "2268x2440",
+    "committedState": "OPENED",
+    "webViewPixels": [
+      2440,
+      2033
+    ],
+    "rotationGate": false,
+    "stockWidthPx": 165,
+    "turn": 1,
+    "sameRoomSeatHand": true
+  },
+  {
+    "check": "cover-portrait",
+    "physical": "1116x2484",
+    "committedState": "CLOSED",
+    "webViewPixels": [
+      1116,
+      2266
+    ],
+    "rotationGate": true,
+    "stockWidthPx": null,
+    "turn": 1,
+    "sameRoomSeatHand": null,
+    "detail": "The peer retained room membership, seat and turn. The hand was hidden by the orientation prompt and checked again in landscape."
+  },
+  {
+    "check": "cover-landscape",
+    "physical": "1116x2484",
+    "committedState": "CLOSED",
+    "webViewPixels": [
+      2332,
+      907
+    ],
+    "rotationGate": false,
+    "stockWidthPx": 93,
+    "turn": 1,
+    "sameRoomSeatHand": true
+  },
+  {
+    "check": "reopened-inner",
+    "physical": "2268x2440",
+    "committedState": "OPENED",
+    "webViewPixels": [
+      2268,
+      2216
+    ],
+    "rotationGate": false,
+    "stockWidthPx": 182,
+    "turn": 1,
+    "sameRoomSeatHand": true
+  },
+  {
+    "check": "drag reorder",
+    "sameHand": true,
+    "orderChanged": true
+  },
+  {
+    "check": "app-host draw and discard",
+    "guestConfirmed": true,
+    "turn": 2
+  },
+  {
+    "check": "background/resume",
+    "guestTurnCompletedInBackground": true,
+    "resumedHumanTurn": 3
+  }
+]
