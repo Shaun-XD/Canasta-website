@@ -20,6 +20,7 @@ export function RoundEndModal({
   gameOverTeamId,
   onReviewTable,
   onNewGame,
+  onNextRound,
   onReturnToLobby,
 }: {
   teams: Team[]
@@ -30,6 +31,7 @@ export function RoundEndModal({
   onReviewTable: () => void
   /** Full match reset: new deal, scores cleared, stay at the table. */
   onNewGame: () => void
+  onNextRound: () => void
   /** Leave the table and return the room to lobby. */
   onReturnToLobby: () => void
 }) {
@@ -90,6 +92,15 @@ export function RoundEndModal({
           >
             Review table
           </button>
+          {!gameOverTeamId && (
+            <button
+              type="button"
+              onClick={onNextRound}
+              className="min-h-12 w-full rounded-lg bg-emerald-400 px-4 py-3 font-semibold text-emerald-950"
+            >
+              Next round
+            </button>
+          )}
           <div className="flex gap-3">
             <button
               type="button"

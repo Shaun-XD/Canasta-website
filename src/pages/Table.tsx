@@ -87,6 +87,7 @@ export function Table() {
     autoEndTurn,
     togglePauseTimer,
     startNewGame,
+    startNextRound,
     returnToLobby,
     exitToHome,
     rejoinOnlineSession,
@@ -868,6 +869,7 @@ export function Table() {
           gameOverTeamId={game.gameOverTeamId}
           onReviewTable={() => setReviewingTable(true)}
           onNewGame={startNewGame}
+          onNextRound={startNextRound}
           onReturnToLobby={returnToLobby}
         />
       )}
@@ -1271,6 +1273,7 @@ export function Table() {
           gameOverTeamId={game.gameOverTeamId}
           onReviewTable={() => setReviewingTable(true)}
           onNewGame={startNewGame}
+          onNextRound={startNextRound}
           onReturnToLobby={returnToLobby}
         />
       )}
