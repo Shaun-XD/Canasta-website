@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Capacitor Bridge.Builder calls Cordova ConfigXmlParser.parse(Context).
+     Cordova resolves this generated XML by name through Resources.getIdentifier. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@xml/config" />

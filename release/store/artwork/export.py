@@ -40,30 +40,27 @@ def export_launcher():
     write(RES / 'drawable/ic_launcher_foreground.xml', vector(paths))
     write(RES / 'drawable/launch_emblem.xml', vector(paths, size=200))
     write(RES / 'drawable/ic_launcher_mono.xml', vector(mono))
-    write(RES / 'drawable/splash.xml', '''<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-  <item android:drawable="@color/ic_launcher_background"/>
-  <item android:gravity="center" android:drawable="@drawable/launch_emblem"/>
-</layer-list>
-''')
     write(RES / 'values/ic_launcher_background.xml', '<resources><color name="ic_launcher_background">#0f5132</color></resources>\n')
-    for api in (26, 33):
-        mono_layer = '\n  <monochrome android:drawable="@drawable/ic_launcher_mono"/>' if api == 33 else ''
-        icon = f'''<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    icon = '''<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
   <background android:drawable="@color/ic_launcher_background"/>
-  <foreground android:drawable="@drawable/ic_launcher_foreground"/>{mono_layer}
+  <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+  <monochrome android:drawable="@drawable/ic_launcher_mono"/>
 </adaptive-icon>
 '''
-        for name in ('ic_launcher', 'ic_launcher_round'):
-            write(RES / f'mipmap-anydpi-v{api}/{name}.xml', icon)
+    for name in ('ic_launcher', 'ic_launcher_round'):
+        write(RES / f'mipmap-anydpi-v26/{name}.xml', icon)
     # Play supplies its own mask. Enlarge the printed emblem for the full-bleed listing icon.
     store_svg = source.replace('<g id="cards">','<g id="cards" transform="translate(-16.2,-16.2) scale(1.3)">')
     write(ROOT / 'public/favicon.svg', store_svg)
     store = bitmap(store_svg.encode(), (1024,1024)).convert('RGBA')
     store.resize((512,512),Image.Resampling.LANCZOS).save(OUTPUT / 'play-icon.png')
     for density, size in [('mdpi',48),('hdpi',72),('xhdpi',96),('xxhdpi',144),('xxxhdpi',192)]:
-        for name, radius in [('ic_launcher',190),('ic_launcher_round',512)]:
+        for name in ('ic_launcher', 'ic_launcher_round'):
             mask = Image.new('L',store.size)
-            ImageDraw.Draw(mask).rounded_rectangle((36,36,987,987),radius,fill=255)
+            if name == 'ic_launcher_round':
+                ImageDraw.Draw(mask).ellipse((0,0,1023,1023),fill=255)
+            else:
+                ImageDraw.Draw(mask).rounded_rectangle((36,36,987,987),radius=190,fill=255)
             masked = store.copy()
             masked.putalpha(mask)
             masked.resize((size,size),Image.Resampling.LANCZOS).save(RES / f'mipmap-{density}/{name}.png')

@@ -2,6 +2,4 @@
 <resources>
     <string name="app_name">Canasta</string>
     <string name="title_activity_main">Canasta</string>
-    <string name="package_name">io.github.shaunxd.canasta</string>
-    <string name="custom_url_scheme">io.github.shaunxd.canasta</string>
 </resources>
