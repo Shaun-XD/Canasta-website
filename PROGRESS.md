@@ -1,0 +1,13 @@
+# Canasta Android release
+
+Status: BLOCKED pending confirmation of the intended Play Console identity, listing and signing continuity. Initial baseline is main 6bc63af. Release work in progress on release/android-play-20261119 in /Users/a/Documents/ChatGPT/Canasta. No Play write attempted.
+
+## History (Hong Kong time)
+- 2026-11-19 01:20 HKT — Started release branch and journal. Existing OnePlus layout commit retained.
+- 2026-11-19 01:21 HKT — Opening official Play Console in the existing browser for read-only account inspection. No listing, upload, payment, signing or declaration authorized until identity is matched.
+- 2026-11-19 01:21 HKT — The existing Chrome session opened the official Console to **Creating a developer account**, /console/u/0/signup. No developer dashboard or app inventory was visible. This does not establish that the intended publisher lacks an account. No listing/search result, package, upload certificate, version history, track, production eligibility or account-specific tester requirement could be verified. No Console form submitted, account created, payment or term accepted.
+- 2026-11-19 01:22 HKT — Production /health returned main 6bc63af; staging returned develop 3356d94. Railway production was SUCCESS, one service, one replica, zero volumes/buckets, zero pending changes and request tracing disabled. Sampled log field presence only (source IP in HTTP logs, Socket.IO connection IDs in deployment logs). No player identifiers or raw logs copied. Baseline at 6bc63af passed all 245 tests, TypeScript, production web build and lint. Dedicated Android engineering, QA and store workstreams started.
+- 2026-11-19 01:23 HKT — No existing Android project or signing configuration identified in repo; only standard Android debug identity identified for local testing. Proposed io.github.shaunxd.canasta / 1.0.0 / 1; all subject to Console verification. Do not use the debug signer for an upload. No approved release vault or designated public support email identified.
+- 2026-11-19 01:23 HKT — Publishing the public Android privacy policy on a dedicated GitHub branch. No changes to main/develop or active rooms.
+- 2026-11-19 01:26 HKT — Public privacy policy pushed to android-privacy-policy (770d27a); unauthenticated HTTP 200. Added home policy/support/licenses links on the release branch. Filed verified requirements, audit, reviewer instructions, track gates and rollback in release/policy/console-handoff.md.
+- 2026-11-19 01:26 HKT — Native wrapper, original graphics, bundled font, notices and release sources prepared. QA provisioned API 36 foldable; baseline OnePlus/Galaxy/phone/desktop viewport checks passed. Preparing identified candidate commit for a clean release build.

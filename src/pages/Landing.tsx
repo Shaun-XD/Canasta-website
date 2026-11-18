@@ -295,10 +295,11 @@ export function Landing() {
         )}
       </div>
 
-      <p className="mt-6 max-w-md pb-4 text-center text-xs text-white/40 sm:mt-8">
-        Online mode syncs 2 or 4 devices through the FastAPI backend. Solo fills empty seats with bots
-        for local practice.
-      </p>
+      <footer className="mt-6 flex gap-5 pb-4 text-center text-sm text-white/70">
+        <a href="https://github.com/Shaun-XD/Canasta-website/blob/android-privacy-policy/PRIVACY.md" target="_blank" rel="noopener noreferrer" className="py-3 underline">Privacy policy</a>
+        <a href="/legal/index.html" className="py-3 underline">Licenses</a>
+        <a href="https://github.com/Shaun-XD/Canasta-website/issues" target="_blank" rel="noopener noreferrer" className="py-3 underline">Support</a>
+      </footer>
     </div>
   )
 }

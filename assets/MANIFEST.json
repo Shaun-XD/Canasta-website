@@ -12,11 +12,11 @@
         "count": 53,
         "pdf": "assets/full_deck.pdf (53 pages, one card per page)"
       },
-      "generation": "scripts/generate_card_faces.py — Pillow renderer. Layout: large top-left rank with suit beneath, mirrored 180° bottom-right, single dominant center suit. No drawn border stroke (soft rounded mask only).",
+      "generation": "scripts/generate_card_faces.py uses Pillow, project-drawn suits and the bundled OFL Figtree font for rank lettering. The release PNGs are opaque. The historical print PDF is separate from the shipped assets.",
       "runtime": "src/components/Card.tsx loads faces via <img src=\"/cards/…\">; card back remains inline SVG.",
       "order": "spades A–K, hearts A–K, diamonds A–K, clubs A–K, then joker",
       "source": "custom, generated in-project",
-      "license": "original work, no third-party assets used, free to use"
+      "license": "Project card art; Figtree licensed under SIL OFL 1.1 (public/fonts/OFL-Figtree.txt)."
     },
     {
       "name": "Card back design",
@@ -49,9 +49,19 @@
     {
       "name": "Favicon",
       "type": "svg",
-      "generation": "public/favicon.svg",
-      "source": "vite scaffold default, safe placeholder",
-      "license": "MIT (Vite project template)"
+      "generation": "release/store/artwork/launcher.svg via release/store/artwork/export.py → public/favicon.svg",
+      "source": "Original two-card design drawn for the Android release.",
+      "license": "Project license; see LICENSE."
+    },
+    {
+      "name": "Figtree variable font",
+      "type": "TrueType",
+      "files": [
+        "public/fonts/Figtree-Variable.ttf",
+        "public/fonts/OFL-Figtree.txt"
+      ],
+      "source": "https://github.com/google/fonts/tree/5bd87dfc525c8a0d1d8529d3684716e00c3fc59a/ofl/figtree",
+      "license": "SIL Open Font License 1.1, copyright 2022 The Figtree Project Authors."
     }
   ],
   "notes": [

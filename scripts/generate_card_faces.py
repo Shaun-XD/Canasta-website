@@ -51,18 +51,11 @@ RANKS = (
     ("K", "king"),
 )
 
-RANK_FONT_CANDIDATES = [
-    Path(r"C:\Windows\Fonts\seguibl.ttf"),  # Segoe UI Black
-    Path(r"C:\Windows\Fonts\impact.ttf"),
-    Path(r"C:\Windows\Fonts\arialbd.ttf"),
-]
-
-
 def load_rank_font(size: int) -> ImageFont.FreeTypeFont:
-    for path in RANK_FONT_CANDIDATES:
-        if path.exists():
-            return ImageFont.truetype(str(path), size=size)
-    return ImageFont.load_default()
+    # Use the same licensed typeface on every build machine.
+    font = ImageFont.truetype(str(ROOT / "public/fonts/Figtree-Variable.ttf"), size=size)
+    font.set_variation_by_axes([900])
+    return font
 
 
 def suit_color(suit: str) -> tuple[int, int, int, int]:

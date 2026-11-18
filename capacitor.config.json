@@ -1,0 +1,19 @@
+{
+  "appId": "io.github.shaunxd.canasta",
+  "appName": "Canasta",
+  "webDir": "dist/android",
+  "loggingBehavior": "none",
+  "server": {
+    "hostname": "canasta-website.vercel.app",
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#0f5132",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "disable"
+    }
+  }
+}

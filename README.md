@@ -32,8 +32,8 @@ are marked with `TODO(rules)` at their point of use in the code:
 - [socket.io-client](https://socket.io/docs/v4/client-api/) talks to the FastAPI
   realtime backend in `server/` (see `server/README.md` and `src/lib/socket.ts`).
 
-All card, avatar, and table visuals are original SVG/CSS generated in-project
-(no third-party image assets). See `assets/MANIFEST.json` for the full asset
+Card faces, backs, avatars, and table visuals are generated in-project.
+The bundled Figtree typeface carries its own SIL Open Font License. See `assets/MANIFEST.json` for the full asset
 inventory and licensing notes.
 
 ## Running locally

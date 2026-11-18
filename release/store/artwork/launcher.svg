@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <title>Two playing cards on green felt</title>
+  <rect width="108" height="108" fill="#0f5132"/>
+  <g id="cards">
+    <path fill="#f1b95c" d="M32 34 Q33 31 36 32 L48 36 L44 70 L40 74 Q38 76 36 75 L25 72 Q22 71 23 68 Z"/>
+    <path fill="#0f5132" d="M34 37 L42 40 L33 68 L27 66 Z"/>
+    <path fill="#f1b95c" d="M34 39 L39 41 L32 64 L29 63 Z"/>
+    <path fill="#fff3d8" d="M46 31 Q46 27 50 27 L76 30 Q80 30.5 79.5 34.5 L75 76 Q74.5 80 70.5 79.5 L44 76.5 Q40 76 40.5 72 Z"/>
+    <path fill="#c74637" d="M61 39 Q63 47 70 53 Q63 58 58 67 Q56 58 49.5 52 Q57 47 61 39 Z"/>
+    <path fill="#c74637" d="M51 32 L54 36 L50.5 39 L48 35 Z M70 68 L72.5 71.5 L69 75 L66.5 71 Z"/>
+  </g>
+</svg>
