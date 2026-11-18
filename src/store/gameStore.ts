@@ -517,7 +517,8 @@ function ensureOnlineSync(set: (partial: Partial<GameStoreState>) => void, get: 
       set({ lastActionError: error })
     },
     // After a socket reconnect the server loses CLIENTS[sid] — rebind via rejoin.
-    onReconnect: () => {
+    // AndroidSession verifies the saved seat after the new namespace is connected.
+    onReconnect: import.meta.env.MODE === 'android' ? undefined : () => {
       void get().actions.rejoinOnlineSession()
     },
   })

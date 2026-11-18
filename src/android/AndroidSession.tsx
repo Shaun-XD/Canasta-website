@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
-import { getSocket } from '../lib/socket'
+import { getSocket, socketRejoinRoom } from '../lib/socket'
 
 // A saved route is only a navigation hint. Room membership is restored by
 // the existing lobby/table session code and checked by the multiplayer server.
@@ -13,7 +13,10 @@ export function AndroidSession() {
   const navigate = useNavigate()
   const hasRoom = useGameStore(s => !!s.room)
   const online = useGameStore(s => s.playMode === 'online')
-  const [disconnected, setDisconnected] = useState(false)
+  const roomId = useGameStore(s => s.room?.roomId)
+  const playerId = useGameStore(s => s.localPlayerId)
+  const [recoveryMessage, setRecoveryMessage] = useState('')
+  const retryRef = useRef<() => void>(() => {})
   const [savedPath, setSavedPath] = useState(() => localStorage.getItem(savedPathKey))
   const atTable = tablePath.test(pathname)
 
@@ -34,21 +37,101 @@ export function AndroidSession() {
   }, [atTable, hasRoom, online, pathname])
 
   useEffect(() => {
-    if (!atTable || !hasRoom || !online) return
+    setRecoveryMessage('')
+    if (!atTable || !roomId || !playerId || !online) return
+    const seat = { roomId, playerId }
     const socket = getSocket()
-    const syncStatus = () => setDisconnected(!navigator.onLine || !socket.connected)
-    syncStatus()
-    socket.on('connect', syncStatus)
-    socket.on('disconnect', syncStatus)
-    window.addEventListener('offline', syncStatus)
-    window.addEventListener('online', syncStatus)
-    return () => {
-      socket.off('connect', syncStatus)
-      socket.off('disconnect', syncStatus)
-      window.removeEventListener('offline', syncStatus)
-      window.removeEventListener('online', syncStatus)
+    let generation = 0
+    let pending = false
+    let lost = false
+    let timer: number | undefined
+    let disposed = false
+    const currentSeat = () => {
+      const state = useGameStore.getState()
+      return !disposed && state.playMode === 'online' &&
+        state.room?.roomId === roomId && state.localPlayerId === playerId
     }
-  }, [atTable, hasRoom, online])
+
+    function invalidate() {
+      generation++
+      pending = false
+      lost = true
+      window.clearTimeout(timer)
+      setRecoveryMessage('Connection lost.')
+    }
+    function retryLater() {
+      window.clearTimeout(timer)
+      if (navigator.onLine && !document.hidden) timer = window.setTimeout(recover, 3000)
+    }
+    async function recover() {
+      if (!currentSeat() || pending || document.hidden) return
+      lost = true
+      setRecoveryMessage('Rejoining table…')
+      if (!socket.connected) {
+        socket.connect()
+        retryLater()
+        return
+      }
+      pending = true
+      const attempt = generation
+      const ack = await socketRejoinRoom(seat)
+      if (!currentSeat() || attempt !== generation) return
+      pending = false
+      if (ack.ok && ack.room && ack.room.roomId === roomId && ack.playerId === playerId &&
+          ack.room.players.some(p => p.id === playerId && p.connectionStatus === 'connected')) {
+        window.clearTimeout(timer)
+        lost = false
+        useGameStore.setState({ room: ack.room, game: ack.game ?? null, lastActionError: null })
+        setRecoveryMessage('')
+        return
+      }
+      setRecoveryMessage(ack.error || 'Could not rejoin the table.')
+      if (/room not found|player not (in|found)/i.test(ack.error ?? '')) return
+      // A failed ack can mean the WebView's socket still looks connected
+      // after a network switch. Start a fresh transport before retrying.
+      socket.disconnect()
+      retryLater()
+    }
+    function disconnected() {
+      if (!currentSeat()) return
+      invalidate()
+      retryLater()
+    }
+    function offline() {
+      invalidate()
+      socket.disconnect()
+    }
+    function visible() {
+      if (!document.hidden) void recover()
+    }
+    // The backend can receive the old socket's disconnect after the new
+    // session has rejoined. Repair that seat's authoritative presence.
+    const unsubscribe = useGameStore.subscribe((next, prev) => {
+      if (!currentSeat() || lost || next.room === prev.room) return
+      const presence = next.room?.players.find(p => p.id === playerId)?.connectionStatus
+      if (presence === 'disconnected') void recover()
+    })
+    // Android can briefly report offline after an interface change. An explicit
+    // retry and an actual Socket.IO connection should still try the server.
+    retryRef.current = recover
+    socket.on('connect', recover)
+    socket.on('disconnect', disconnected)
+    window.addEventListener('offline', offline)
+    window.addEventListener('online', recover)
+    document.addEventListener('visibilitychange', visible)
+    if (!socket.connected || !navigator.onLine) disconnected()
+    return () => {
+      disposed = true
+      window.clearTimeout(timer)
+      unsubscribe()
+      socket.off('connect', recover)
+      socket.off('disconnect', disconnected)
+      window.removeEventListener('offline', offline)
+      window.removeEventListener('online', recover)
+      document.removeEventListener('visibilitychange', visible)
+      retryRef.current = () => {}
+    }
+  }, [atTable, roomId, playerId, online])
 
   useEffect(() => {
     function onBack(event: Event) {
@@ -65,11 +148,15 @@ export function AndroidSession() {
     return () => window.removeEventListener('canasta-back', onBack)
   }, [atTable, navigate])
 
-  if (atTable && hasRoom && online && disconnected) {
+  if (atTable && hasRoom && online && recoveryMessage) {
     return (
       <div role="status" className="fixed inset-x-0 top-0 z-[100] flex items-center justify-center gap-2 bg-emerald-950 p-2 text-center text-sm text-white">
-        Connection lost.
-        <button className="rounded border border-white/40 px-3 py-1" onClick={() => void useGameStore.getState().actions.rejoinOnlineSession()}>Reconnect</button>
+        <span>{recoveryMessage}</span>
+        <button className="rounded border border-white/40 px-3 py-1" onClick={() => retryRef.current()}>Reconnect</button>
+        <button className="rounded border border-white/40 px-3 py-1" onClick={() => {
+          useGameStore.getState().actions.exitToHome()
+          navigate('/', { replace: true })
+        }}>Exit to home</button>
       </div>
     )
   }
